@@ -652,13 +652,13 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     # disassembles code on demand, which can expose calls to functions that
     # did not exist yet, so repeat the closure and the pass until it settles.
     meta, ok = {}, {}
-    done = set()
-    for _round in range(4):
+    for _round in range(5):
+        # every function is walked again each round: a walk can grow once code
+        # it reaches has been disassembled, and the emission pass must see the
+        # same listing this pass saw
+        meta, ok = {}, {}
         for f in funcs:
             a = f.getEntryPoint().getOffset()
-            if a in done:
-                continue
-            done.add(a)
             t = FunctionTranslator(program, f, set())
             try:
                 code = t.translate()
