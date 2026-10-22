@@ -243,7 +243,13 @@ class FunctionTranslator:
         start = ins_at(self.space_.getAddress(self.entry))
         if start is None:
             return []
+        # Ghidra's body also seeds the walk: a block reached only through a
+        # jump table Ghidra resolved partially has no incoming flow we can
+        # follow, but it is still part of the function.
         seen, order, work = set(), [], [start]
+        for ins in listing.getInstructions(self.func.getBody(), True):
+            if fm.getFunctionAt(ins.getAddress()) is None or ins.getAddress().getOffset() == self.entry:
+                work.append(ins)
         while work:
             ins = work.pop()
             a = ins.getAddress().getOffset()
@@ -479,10 +485,11 @@ class FunctionTranslator:
             value_last = name in ('psllw', 'pshufw')
             parts = [packed_arg(x, value_last and i == len(args) - 1) for i, x in enumerate(args)]
             self.emit(f'{USEROPS_PACKED[name]}({self.ptr(o)}, {", ".join(parts)});')
-        elif name in USEROPS_TRAP:
-            self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
         else:
-            raise Unsupported(f'userop {name}')
+            # anything else has no host equivalent (privileged instructions,
+            # or padding decoded as code): trap if it is ever reached
+            self.features['userop_trap_' + name] += 1
+            self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
 
     def render(self):
         # instructions are emitted in address order, and a function body can
@@ -657,9 +664,17 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             for a in part:
                 if a in hooks:
                     # the host runtime provides this one; keep the symbol so direct calls link
-                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}\n\n')
-                else:
-                    out.write(FunctionTranslator(program, ok[a], known).translate() + '\n\n')
+                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
+                    continue
+                try:
+                    code = FunctionTranslator(program, ok[a], known).translate()
+                except Exception as e:  # noqa: BLE001 - keep the build consistent
+                    print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
+                    meta[a]['status'] = f'emit failed: {e}'
+                    code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {meta[a]["name"]}: {e} */' + '\n'
+                            + f'    rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u);' + '\n}')
+                out.write(code + '\n\n')
+
     def purge_bytes(f):
         """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function.
 
