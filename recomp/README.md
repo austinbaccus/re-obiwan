@@ -80,7 +80,17 @@ docker compose exec ghidra-mcp bash -c '
 
 The game reads its files from the folder that holds `default.xbe` and keeps
 its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
-next to the executable.
+next to the executable. Environment switches for unattended runs:
+
+- `RECOMP_STALL=seconds`: when no frame has been presented for that long,
+  print every guest thread's guest and host stack (three samples, then exit).
+- `RECOMP_INPUT="300:START,700:A"`: press a gamepad button for 10 frames at
+  those frame numbers (the attract loop only ends on START).
+- `RECOMP_LAUNCH=path`: boot with saved launch data instead of a cold boot.
+  When the game relaunches itself (`XLaunchNewImageA`) the host saves the
+  data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.
+- `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
+  indirect (or all) guest calls. About 100× slower.
 
 The translator's third argument picks what to emit: `leaf` (functions
 with no calls, computed jumps, special instructions or `fs:` accesses: the

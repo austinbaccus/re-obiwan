@@ -76,15 +76,52 @@ HOOK(XInputOpen) {
 HOOK(XInputClose) { RET(0, 1); }
 HOOK(XInputGetCapabilities) {
     uint32_t caps = ARG(ctx, 1);
-    memset(MEM(caps), 0, 0x1c); /* XINPUT_CAPABILITIES: SubType, Reserved, In (gamepad), Out (rumble) */
-    WR8(MEM(caps), 1);      /* SubType: XINPUT_DEVSUBTYPE_GC_GAMEPAD */
-    WR16(MEM(caps + 4), 0xffff); /* In.Gamepad.wButtons: all supported */
+    /* XINPUT_CAPABILITIES is packed: SubType +0, Reserved +1, In.Gamepad +3
+       {wButtons +3, bAnalogButtons[8] +5, sThumbLX/LY/RX/RY +13..+19}, Out +21.
+       The game accepts a pad only if every digital and analog control and all
+       four thumb axes are reported (XBoxGenerator's FUN_000cb950). */
+    memset(MEM(caps), 0, 0x1c);
+    WR8(MEM(caps), 1);            /* SubType: XINPUT_DEVSUBTYPE_GC_GAMEPAD */
+    WR16(MEM(caps + 3), 0xffff);  /* wButtons */
+    memset(MEM(caps + 5), 0xff, 8); /* bAnalogButtons */
+    for (int i = 0; i < 4; i++) WR16(MEM(caps + 13 + 2 * i), 0xffff); /* thumb axes */
     RET(0, 2);
 }
+/* RECOMP_INPUT="frame:BUTTON,frame:BUTTON,...": press that button for 10
+   frames starting at that frame, for runs nobody is sitting at (the attract
+   loop only ends on START). Buttons: START BACK A B X Y UP DOWN LEFT RIGHT. */
+static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y) {
+    const char *script = getenv("RECOMP_INPUT");
+    if (!script) return 0;
+    uint32_t frame = d3d_frame_count();
+    uint16_t buttons = 0;
+    for (const char *p = script; *p; ) {
+        char name[16] = "";
+        unsigned at = 0;
+        if (sscanf(p, "%u:%15[A-Za-z]", &at, name) == 2 && frame >= at && frame < at + 10) {
+            if (!strcmp(name, "START")) buttons |= 0x0010;
+            else if (!strcmp(name, "BACK")) buttons |= 0x0020;
+            else if (!strcmp(name, "UP")) buttons |= 0x0001;
+            else if (!strcmp(name, "DOWN")) buttons |= 0x0002;
+            else if (!strcmp(name, "LEFT")) buttons |= 0x0004;
+            else if (!strcmp(name, "RIGHT")) buttons |= 0x0008;
+            else if (!strcmp(name, "A")) *a = 255;
+            else if (!strcmp(name, "B")) *b = 255;
+            else if (!strcmp(name, "X")) *x = 255;
+            else if (!strcmp(name, "Y")) *y = 255;
+        }
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+    }
+    return buttons;
+}
+
 HOOK(XInputGetState) {
     uint32_t state = ARG(ctx, 1);
     static uint32_t packet;
-    memset(MEM(state), 0, 0x14);
+    if (!packet) fprintf(stderr, "input: the game polls the gamepad (frame %u)\n", d3d_frame_count());
+    memset(MEM(state), 0, 0x16); /* XINPUT_STATE: dwPacketNumber, then the packed XINPUT_GAMEPAD at +4 */
     WR32(MEM(state), ++packet);
     /* keyboard as a stand-in until real input is wired: arrows = left stick, Enter = A, Esc = START */
     int16_t lx = 0, ly = 0;
@@ -92,12 +129,16 @@ HOOK(XInputGetState) {
     if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
     if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;
     if (GetAsyncKeyState(VK_DOWN) & 0x8000) ly = -32000;
+    uint8_t a = (GetAsyncKeyState(VK_RETURN) & 0x8000) ? 255 : 0, b = (GetAsyncKeyState(VK_SPACE) & 0x8000) ? 255 : 0, x = 0, y = 0;
     uint16_t buttons = 0;
     if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
     if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+    buttons |= scripted_buttons(&a, &b, &x, &y);
     WR16(MEM(state + 4), buttons);
-    WR8(MEM(state + 6), (GetAsyncKeyState(VK_RETURN) & 0x8000) ? 255 : 0); /* A */
-    WR8(MEM(state + 7), (GetAsyncKeyState(VK_SPACE) & 0x8000) ? 255 : 0);  /* B */
+    WR8(MEM(state + 6), a); /* A */
+    WR8(MEM(state + 7), b); /* B */
+    WR8(MEM(state + 8), x);
+    WR8(MEM(state + 9), y);
     WR16(MEM(state + 14), (uint16_t)lx);
     WR16(MEM(state + 16), (uint16_t)ly);
     RET(0, 2);
