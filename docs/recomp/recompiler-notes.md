@@ -58,6 +58,28 @@ Start with option 1. The RTTI that `catch` matching, `typeid` and
 `dynamic_cast` read stays at its original address in the guest image, so it
 works unchanged (classes.md).
 
+Option 1 is what the prototype does. The CRT's handlers run as recompiled
+code; the host kernel supplies `RtlRaiseException` (walk the `fs:[0]` chain,
+call each handler as a cdecl routine) and `RtlUnwind` (call the handlers with
+`EXCEPTION_UNWINDING` up to the target frame, then continue at the caller's
+return point). Two things make the continuations work:
+
+- Functions that register a handler, take the address of one of their own
+  instructions, or call `setjmp` are emitted *resumable*: `ctx->resume_ip`
+  enters them at any instruction through their dispatch switch (about 1,900
+  functions). A call to an address inside such a function is a catch or
+  filter funclet and runs the same way. `docs/recomp/resumable-functions.txt`
+  adds any the detection misses; `rt_resume` names the function when it is
+  asked to enter one that is not.
+- Every `ret` records the return address in `ctx->ret_ip`. `rt_resume(ip)`
+  runs the function containing `ip` from there and, when it returns, keeps
+  going in the caller at `ret_ip`, and so on up the guest stack until the
+  return address is one the host pushed (`0xDEAD0000 | depth`), at which point
+  it `longjmp`s to that host entry (`rt_host_call`). The host frames of the
+  throwing path are simply abandoned until then, so each throw leaves its
+  host stack depth behind until the thread (or callback) ends; threads have
+  64 MB host stacks to absorb that.
+
 ## Memory model
 
 - The image is fixed at `0x00010000`..`0x005295E0` with no relocations, so the
@@ -83,6 +105,28 @@ works unchanged (classes.md).
 - The frame tick clamps `dt` to 0.1 s and is variable-step, so running faster
   than 60 Hz on PC should mostly work; anything that assumes 30/60 Hz will show
   up in the per-subsystem tick functions listed in code-map.md.
+
+## Prototype results (2026-10-22)
+
+`recomp/` holds the translator, runtime and differential test described in
+`recomp/README.md`. Over the whole image (15,501 functions plus 3,015
+initializer entries added later):
+
+- every function translates; the output builds with MSVC for x86 and x64;
+- the differential test over all 13,938 `.text` functions, 3 random states
+  each: 4,595 functions match the original on every run that executed
+  (registers, x87 result, all of memory), 9,239 fault natively on every run
+  (wild pointers from random inputs, so untestable this way), 41 reach
+  library code that was not recompiled, 11 time out;
+- 52 functions differ, all explained: `FNSTSW` results (Ghidra models only
+  C0-C3 of the x87 status word, not TOP or the sticky exception flags, and
+  the game only tests C0/C2/C3), `FNSTCW` reserved bit 6, functions that
+  read their own return address (`_alloca_probe`, `__SEH_prolog/epilog`),
+  and two one-bit float rounding differences from 80-bit intermediates.
+
+The recompiled XAPI runs unchanged on the host kernel in `recomp/host`:
+`XapiInitProcess` (heap, D:/T:/U:/Z: drive mapping, title metadata, cache
+partition) and the CRT and C++ static initializers complete.
 
 ## Suggested next steps
 

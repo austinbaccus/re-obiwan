@@ -1,0 +1,11 @@
+# Code entry points Ghidra did not make functions (reached only through data).
+# One hex address per line; tools/ghidra_scripts/create_functions.py applies it.
+0x0002ac05  # main thread start (CreateThread target in entry)
+0x0002e090  # XapiThreadStartup (SystemRoutine of every XAPI thread)
+# CRT initializer tables walked by _rtinit / _cinit (see code-map.md)
+table 0x00422ba0 0x00425ae4
+# function pointers taken by value (mov reg, imm / push imm)
+scan immediates
+0x002cac30
+# CRT math functions called through __cintrindisp2's pointer argument
+0x002d1310
