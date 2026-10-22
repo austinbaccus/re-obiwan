@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Extract the game's XDVDFS filesystem (default.xbe, media, etc.) from the ISO.
+# Usage: extract-iso [path/to/game.iso]
+set -euo pipefail
+
+iso="${1:-${OBIWAN_ISO}}"
+out="${EXTRACT_DIR}"
+
+if [[ ! -f "${iso}" ]]; then
+    echo "ISO not found at ${iso}. Put obiwan.iso in the repo folder or pass a path." >&2
+    exit 1
+fi
+
+if [[ -e "${out}/default.xbe" ]]; then
+    echo "${out}/default.xbe already exists; delete ${out} to extract again." >&2
+    exit 0
+fi
+
+mkdir -p "${out}"
+# extract-xiso creates a subfolder named after the ISO; flatten it afterwards.
+tmp="$(mktemp -d "${WORKSPACE}/.extract.XXXXXX")"
+trap 'rm -rf "${tmp}"' EXIT
+extract-xiso -x "${iso}" -d "${tmp}"
+shopt -s dotglob
+src="${tmp}"
+if [[ ! -e "${tmp}/default.xbe" ]]; then
+    sub=("${tmp}"/*/)
+    [[ ${#sub[@]} -eq 1 ]] && src="${sub[0]}"
+fi
+mv "${src}"/* "${out}/"
+
+echo "Extracted to ${out}"
+ls -la "${out}"

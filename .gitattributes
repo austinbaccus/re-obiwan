@@ -1,0 +1,6 @@
+* text=auto
+# Scripts copied into the Linux container must keep LF line endings,
+# even when the repo is checked out on Windows.
+*.sh text eol=lf
+docker/** text eol=lf
+compose.yaml text eol=lf

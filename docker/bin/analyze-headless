@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Thin wrapper around Ghidra's analyzeHeadless, defaulting to the shared project.
+# Example: analyze-headless -process default.xbe -postScript MyScript.java
+set -euo pipefail
+mkdir -p "${GHIDRA_PROJECT_DIR}"
+exec "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${GHIDRA_PROJECT_DIR}" "${GHIDRA_PROJECT_NAME}" "$@"
