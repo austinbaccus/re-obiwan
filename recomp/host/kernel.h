@@ -54,6 +54,7 @@ uint32_t kernel_create_kpcr(uint32_t stack_base, uint32_t stack_limit, uint32_t 
 void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t stack_size,
                        uint32_t tls_size, uint32_t system_routine);
 
+Ctx *kernel_current_ctx(void); /* the guest context of the calling host thread, or NULL */
 extern int g_trace; /* RECOMP_TRACE=1: log every kernel call and hook */
 void trace(const char *fmt, ...);
 

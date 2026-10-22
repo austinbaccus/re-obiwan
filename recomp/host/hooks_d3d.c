@@ -40,8 +40,17 @@ static int bytes_per_pixel(uint32_t fmt) {
     }
 }
 
+static uint32_t alloc_or_die(uint32_t size, uint32_t align, const char *what) {
+    uint32_t a = kmem_alloc(size, align);
+    if (!a) {
+        fprintf(stderr, "d3d: out of guest memory allocating %u bytes for %s\n", size, what);
+        rt_trap(kernel_current_ctx(), TRAP_UNSUPPORTED, 0);
+    }
+    return a;
+}
+
 static uint32_t new_object(uint32_t type) {
-    uint32_t o = kmem_alloc(OBJ_SIZE, 16);
+    uint32_t o = alloc_or_die(OBJ_SIZE, 16, "a resource object");
     WR32(MEM(o + O_COMMON), 1 | (type << 16));
     WR32(MEM(o + O_MAGICOFF), OBJ_MAGIC);
     return o;
@@ -83,7 +92,7 @@ static uint32_t new_pixel_container(uint32_t type, uint32_t w, uint32_t h, uint3
     uint32_t bytes = (level_offset(o, levels) + 4095) & ~4095u;
     bytes *= depth ? depth : 1;
     WR32(MEM(o + O_BYTES), bytes);
-    WR32(MEM(o + O_DATA), kmem_alloc(bytes, 4096));
+    WR32(MEM(o + O_DATA), alloc_or_die(bytes, 4096, "texture memory"));
     /* encoded fields, so code that decodes them itself gets something sane */
     uint32_t lg2w = 0, lg2h = 0;
     while ((1u << lg2w) < w) lg2w++;
@@ -241,7 +250,7 @@ static void create_buffer(Ctx *ctx, uint32_t type, uint32_t length, uint32_t pp)
     uint32_t o = new_object(type);
     length = (length + 15) & ~15u;
     WR32(MEM(o + O_BYTES), length);
-    WR32(MEM(o + O_DATA), kmem_alloc(length ? length : 16, 16));
+    WR32(MEM(o + O_DATA), alloc_or_die(length ? length : 16, 16, "buffer memory"));
     if (pp) WR32(MEM(pp), o);
 }
 HOOK(D3DDevice_CreateVertexBuffer) { create_buffer(ctx, T_VERTEXBUFFER, ARG(ctx, 0), ARG(ctx, 4)); RET(D3DDevice_CreateVertexBuffer, 0); }
@@ -258,7 +267,13 @@ HOOK(D3DResource_Release) {
     uint32_t c = RD32(MEM(o + O_COMMON));
     if (c & 0xffff) c--;
     WR32(MEM(o + O_COMMON), c);
-    RET(D3DResource_Release, c & 0xffff); /* memory is kept: the game may still hold pointers */
+    if ((c & 0xffff) == 0 && is_ours(o) && o != g_backbuffer && o != g_depth && o != g_rendertarget) {
+        /* last reference: free the backing memory and the object, as D3D would */
+        if (RD32(MEM(o + O_BYTES))) kmem_free(RD32(MEM(o + O_DATA))); /* surfaces from GetSurfaceLevel alias their texture */
+        WR32(MEM(o + O_MAGICOFF), 0);
+        kmem_free(o);
+    }
+    RET(D3DResource_Release, c & 0xffff);
 }
 HOOK(D3DResource_Register) {
     /* resources from the game's bundles: Data holds an offset into the base the game passes */

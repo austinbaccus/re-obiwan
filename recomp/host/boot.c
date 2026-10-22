@@ -56,6 +56,16 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
     if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
         fprintf(stderr, "    %s address %08lx\n", e->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
                 (DWORD)e->ExceptionRecord->ExceptionInformation[1]);
+    Ctx *g = kernel_current_ctx();
+    if (g) {
+        fprintf(stderr, "    guest eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x\n",
+                RD32(g->r + REG_EAX), RD32(g->r + REG_ECX), RD32(g->r + REG_EDX), RD32(g->r + REG_EBX),
+                RD32(g->r + REG_ESP), RD32(g->r + REG_EBP), RD32(g->r + REG_ESI), RD32(g->r + REG_EDI));
+        uint32_t gesp = RD32(g->r + REG_ESP);
+        fprintf(stderr, "    guest stack:");
+        for (int i = 0; i < 12; i++) fprintf(stderr, " %08x", RD32(MEM(gesp + 4 * i)));
+        fprintf(stderr, "\n");
+    }
     HANDLE proc = GetCurrentProcess();
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
     SymInitialize(proc, NULL, TRUE);

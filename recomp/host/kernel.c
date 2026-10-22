@@ -463,6 +463,7 @@ static void guest_thread_main(void *param) {
 }
 
 static __declspec(thread) Ctx *t_ctx;
+Ctx *kernel_current_ctx(void) { return t_ctx; }
 static __declspec(thread) jmp_buf *t_thread_exit;
 
 void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t stack_size,
@@ -1256,7 +1257,7 @@ static KFn k_by_ordinal[400];
 
 void kernel_call(Ctx *ctx, uint32_t ordinal) {
     KFn fn = ordinal < 400 ? k_by_ordinal[ordinal] : NULL;
-    if (g_trace) trace("kernel %s(%08x, %08x, %08x, %08x)", ordinal_name(ordinal), ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3));
+    if (g_trace) trace("kernel %s(%08x, %08x, %08x, %08x) from %08x", ordinal_name(ordinal), ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3), RD32(MEM(RD32(ctx->r + REG_ESP))));
     if (!fn) {
         fprintf(stderr, "kernel function %s (ordinal %u) not implemented\n", ordinal_name(ordinal), ordinal);
         rt_trap(ctx, TRAP_UNSUPPORTED, KERNEL_MAGIC | ordinal);
