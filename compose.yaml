@@ -33,6 +33,11 @@ services:
     <<: *common
     depends_on:
       - ghidra-mcp
+    # Share the MCP server's network namespace so it is reachable as
+    # http://localhost:8000/mcp here, exactly like from Windows. The server only
+    # accepts "localhost"/"127.0.0.1" Host headers (MCP's DNS-rebinding
+    # protection), so a container hostname such as ghidra-mcp gets HTTP 421.
+    network_mode: "service:ghidra-mcp"
     volumes:
       - .:/workspace
       # Keeps Claude Code login and settings between container runs.
@@ -40,7 +45,6 @@ services:
     environment:
       OBIWAN_ISO: /workspace/obiwan.iso
       OBIWAN_XBE: ${OBIWAN_XBE:-}
-      GHIDRA_MCP_URL: http://ghidra-mcp:8000/mcp
       # Optional: set on the host to use an API key instead of `claude` login.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     stdin_open: true
