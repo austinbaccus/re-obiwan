@@ -22,6 +22,7 @@ void r_set_transform(uint32_t state, const float *m);
 void r_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz, float maxz);
 void r_set_vertex_shader(uint32_t handle);
 void r_set_pixel_shader(uint32_t handle);
+void r_create_pixel_shader(uint32_t handle, const uint32_t *psdef); /* D3DPIXELSHADERDEF, 66 dwords */
 void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);
 void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
 void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);
@@ -34,3 +35,4 @@ void r_resource_freed(uint32_t guest_object);
 /* hooks_d3d.c: dimensions of a guest pixel container level */
 void d3d_describe(uint32_t object, uint32_t level, uint32_t *w, uint32_t *h, uint32_t *fmt, uint32_t *pitch);
 uint32_t d3d_level_offset(uint32_t object, uint32_t level);
+int d3d_has_linear_layout(uint32_t object); /* rows at a given pitch regardless of the format code */

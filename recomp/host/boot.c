@@ -57,6 +57,7 @@ static void print_guest_state(Ctx *g) {
             RD32(g->r + REG_EAX), RD32(g->r + REG_ECX), RD32(g->r + REG_EDX), RD32(g->r + REG_EBX),
             RD32(g->r + REG_ESP), RD32(g->r + REG_EBP), RD32(g->r + REG_ESI), RD32(g->r + REG_EDI));
     uint32_t gesp = RD32(g->r + REG_ESP);
+    if (gesp < 0x10000 || gesp >= 0x4000000) return; /* no guest stack (yet) */
     fprintf(stderr, "    guest stack:");
     for (int i = 0; i < 12; i++) fprintf(stderr, " %08x", RD32(MEM(gesp + 4 * i)));
     fprintf(stderr, "\n    guest return addresses:");

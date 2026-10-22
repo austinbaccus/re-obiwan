@@ -120,6 +120,7 @@ static int g_stage_dirty = 1;
 static float g_texmat[4][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
                                 {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
 static uint32_t g_texflags[4];   /* the game's D3DTSS_TEXTURETRANSFORMFLAGS per stage */
+static uint32_t g_stage_ops[4][2]; /* COLOROP, ALPHAOP per stage, for the draw log */
 
 static TexSlot *tex_find(uint32_t guest, int create) {
     TexSlot *free_slot = NULL;
@@ -222,6 +223,32 @@ static uint32_t to_argb(uint32_t fmt, const uint8_t *p) {
     }
 }
 
+/* Interim: the front end fills some textures of swizzled formats (its
+   bitmaps: logo, portraits, button icons) with linear rows and swizzles
+   others itself (font atlases), and why is not understood yet. Pick the
+   layout under which horizontally adjacent texels differ least: real
+   images are smooth, mis-read ones are not. */
+static uint32_t morton_index(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    uint32_t r = 0, bit = 0;
+    for (uint32_t i = 1; i < w || i < h; i <<= 1) {
+        if (i < w) r |= ((x & i) ? 1u : 0u) << bit++;
+        if (i < h) r |= ((y & i) ? 1u : 0u) << bit++;
+    }
+    return r;
+}
+static int looks_linear(const uint8_t *src, uint32_t w, uint32_t h, uint32_t bpp) {
+    if (w < 8 || h < 8 || getenv("RECOMP_NO_LAYOUT_GUESS")) return 0;
+    uint64_t lin = 0, swz = 0;
+    uint32_t step = h / 32 ? h / 32 : 1;
+    for (uint32_t y = 0; y < h; y += step)
+        for (uint32_t x = 0; x + 1 < w; x++) {
+            const uint8_t *a = src + (y * w + x) * bpp, *b = a + bpp;
+            const uint8_t *c = src + morton_index(x, y, w, h) * bpp, *d = src + morton_index(x + 1, y, w, h) * bpp;
+            for (uint32_t k = 0; k < bpp; k++) { lin += abs(a[k] - b[k]); swz += abs(c[k] - d[k]); }
+        }
+    return lin < swz;
+}
+
 static void upload(TexSlot *t) {
     uint32_t w, h, fmt, pitch;
     d3d_describe(t->guest, 0, &w, &h, &fmt, &pitch);
@@ -237,11 +264,13 @@ static void upload(TexSlot *t) {
             t->tex = NULL; t->dirty = 0;
             return;
         }
-        t->w = w; t->h = h; t->fmt = fmt; t->linear = is_linear(fmt);
+        t->w = w; t->h = h; t->fmt = fmt;
     }
+    const uint8_t *src = MEM(data);
+    t->linear = is_linear(fmt) || d3d_has_linear_layout(t->guest);
+    if (!t->linear && !dxt && looks_linear(src, w, h, bpp_of(fmt))) t->linear = 1;
     D3DLOCKED_RECT lr;
     if (FAILED(IDirect3DTexture9_LockRect(t->tex, 0, &lr, NULL, 0))) return;
-    const uint8_t *src = MEM(data);
     if (dxt) {
         uint32_t bh = h < 4 ? 1 : h / 4;
         for (uint32_t y = 0; y < bh; y++) memcpy((uint8_t *)lr.pBits + y * lr.Pitch, src + y * pitch, pitch);
@@ -249,7 +278,7 @@ static void upload(TexSlot *t) {
         uint32_t bpp = bpp_of(fmt);
         uint8_t *lin = (uint8_t *)src;
         uint8_t *tmp = NULL;
-        if (!t->linear) { /* swizzled: straighten into a scratch copy first */
+        if (!t->linear && !getenv("RECOMP_RAWTEX")) { /* swizzled: straighten into a scratch copy first */
             tmp = malloc(w * h * bpp);
             unswizzle(src, w, h, bpp, tmp, w * bpp);
             lin = tmp;
@@ -261,6 +290,22 @@ static void upload(TexSlot *t) {
             for (uint32_t x = 0; x < w; x++) out[x] = to_argb(fmt, in + x * bpp);
         }
         free(tmp);
+    }
+    if (getenv("RECOMP_DUMPTEX")) { /* debugging: write the uploaded texels as a BMP, and the guest bytes raw */
+        char name[64];
+        snprintf(name, sizeof name, "build\\tex_%08x_%02x_%ux%u.raw", t->guest, fmt, w, h);
+        FILE *raw = fopen(name, "wb");
+        if (raw) { fwrite(src, 1, dxt ? pitch * (h < 4 ? 1 : h / 4) : w * h * bpp_of(fmt), raw); fclose(raw); }
+        snprintf(name, sizeof name, "build\\tex_%08x_%02x.bmp", t->guest, fmt);
+        FILE *f = fopen(name, "wb");
+        if (f) {
+            uint32_t rowbytes = w * 4, size = 54 + rowbytes * h;
+            uint8_t hdr[54] = {'B', 'M', size, size >> 8, size >> 16, size >> 24, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0,
+                               w, w >> 8, w >> 16, w >> 24, h, h >> 8, h >> 16, h >> 24, 1, 0, 32, 0};
+            fwrite(hdr, 1, 54, f);
+            for (int y = (int)h - 1; y >= 0; y--) fwrite((uint8_t *)lr.pBits + y * lr.Pitch, 1, rowbytes, f);
+            fclose(f);
+        }
     }
     IDirect3DTexture9_UnlockRect(t->tex, 0);
     t->dirty = 0;
@@ -291,8 +336,11 @@ static void apply_textures(void) {
         if (t->tex && t->linear) {
             float sx = 1.0f / t->w, sy = 1.0f / t->h;
             for (int r = 0; r < 4; r++) { m.m[r][0] *= sx; m.m[r][1] *= sy; }
-            if (!flags) flags = D3DTTFF_COUNT2;
         }
+        /* the console applies a set texture matrix without a separate enable;
+           the front end maps vertex positions to texels through it */
+        static const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        if (!flags && (t->linear || memcmp(g_texmat[s], identity, 64) != 0)) flags = D3DTTFF_COUNT2;
         IDirect3DDevice9_SetTransform(g_dev, D3DTS_TEXTURE0 + s, &m);
         IDirect3DDevice9_SetTextureStageState(g_dev, s, D3DTSS_TEXTURETRANSFORMFLAGS, flags);
     }
@@ -406,6 +454,7 @@ void r_set_rs(uint32_t pc_state, uint32_t value) {
 /* Xbox D3DTSS indices (deferred 0..21, then the rest) */
 void r_set_tss(uint32_t stage, uint32_t type, uint32_t value) {
     if (!g_dev || stage >= 4) return;
+    if (g_drawlog > 0) fprintf(stderr, "tss stage %u type %u = %08x\n", stage, type, value);
     switch (type) {
     case 0: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSU, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
     case 1: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSV, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
@@ -416,11 +465,11 @@ void r_set_tss(uint32_t stage, uint32_t type, uint32_t value) {
     case 6: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPMAPLODBIAS, value); break;
     case 7: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXMIPLEVEL, 0); break;
     case 8: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXANISOTROPY, value ? value : 1); break;
-    case 12: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, value); break;
+    case 12: g_stage_ops[stage][0] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, value); break;
     case 13: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG0, value); break;
     case 14: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG1, value); break;
     case 15: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG2, value); break;
-    case 16: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, value); break;
+    case 16: g_stage_ops[stage][1] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, value); break;
     case 17: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG0, value); break;
     case 18: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG1, value); break;
     case 19: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG2, value); break;
@@ -443,7 +492,7 @@ void r_set_transform(uint32_t state, const float *m) {
     /* Xbox D3DTRANSFORMSTATETYPE: VIEW 0, PROJECTION 1, TEXTURE0..3 2..5, WORLD..WORLD3 6..9
        (and D3DTS_WORLDMATRIX(n) = 256 + n) */
     if (g_drawlog > 0)
-        fprintf(stderr, "transform %u: [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]\n", state,
+        fprintf(stderr, "transform %u: [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f]\n", state,
                 m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
     if (state == 0) IDirect3DDevice9_SetTransform(g_dev, D3DTS_VIEW, (const D3DMATRIX *)m);
     else if (state == 1) {
@@ -506,6 +555,23 @@ void r_set_vertex_shader(uint32_t handle) {
     if (g_dev) IDirect3DDevice9_SetFVF(g_dev, handle & ~0x1u);
 }
 void r_set_pixel_shader(uint32_t handle) { g_ps_handle = handle; }
+
+void r_create_pixel_shader(uint32_t handle, const uint32_t *def) {
+    /* for now: describe each distinct definition once (RECOMP_DRAWLOG) */
+    static uint32_t seen[32][66]; static int nseen;
+    for (int i = 0; i < nseen; i++) if (memcmp(seen[i], def, 264) == 0) return;
+    if (nseen < 32) memcpy(seen[nseen++], def, 264);
+    if (g_drawlog <= 0 && !getenv("RECOMP_PSLOG")) return;
+    fprintf(stderr, "pixel shader %08x: count %08x rgbin", handle, def[53]);
+    for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", def[34 + i]);
+    fprintf(stderr, "\n   rgbout");
+    for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", def[45 + i]);
+    fprintf(stderr, "\n   alphain");
+    for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", def[i]);
+    fprintf(stderr, "\n   alphaout");
+    for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", def[26 + i]);
+    fprintf(stderr, "\n   final %08x %08x texmodes %08x c0 %08x c1 %08x dot %08x inputtex %08x\n", def[8], def[9], def[54], def[10], def[18], def[55], def[56]);
+}
 void r_set_stream(uint32_t stream, uint32_t vb, uint32_t stride) {
     if (stream == 0) { g_stream_vb = vb; g_stream_stride = stride; }
 }
@@ -530,7 +596,8 @@ static void drawlog(uint32_t prim, uint32_t n, const void *data, uint32_t stride
     fprintf(stderr, "draw: prim %u n %u fvf %08x stride %u ps %08x tex %08x v0 %.2f %.2f %.2f %.2f %08x\n", prim, n, g_fvf, stride, g_ps_handle,
             g_bound[0], v[0], v[1], v[2], v[3], ((const uint32_t *)data)[4]);
     TexSlot *t = g_bound[0] ? tex_find(g_bound[0], 0) : NULL;
-    if (t) fprintf(stderr, "      tex %ux%u fmt %02x linear %d\n", t->w, t->h, t->fmt, t->linear);
+    if (t) fprintf(stderr, "      tex %ux%u fmt %02x linear %d hdr %08x/%08x colorop %u alphaop %u uv0 %.3f %.3f\n", t->w, t->h, t->fmt, t->linear,
+                   RD32(MEM(t->guest + 0xC)), RD32(MEM(t->guest + 0x10)), g_stage_ops[0][0], g_stage_ops[0][1], v[(stride - 8) / 4], v[(stride - 4) / 4]);
 }
 
 static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride) {

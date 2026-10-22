@@ -57,6 +57,7 @@ static uint32_t alloc_or_die(uint32_t size, uint32_t align, const char *what) {
 
 static uint32_t new_object(uint32_t type) {
     uint32_t o = alloc_or_die(OBJ_SIZE, 16, "a resource object");
+    memset(MEM(o), 0, OBJ_SIZE);
     WR32(MEM(o + O_COMMON), 1 | (type << 16));
     WR32(MEM(o + O_MAGICOFF), OBJ_MAGIC);
     return o;
@@ -64,20 +65,29 @@ static uint32_t new_object(uint32_t type) {
 static int is_ours(uint32_t o) { return o && RD32(MEM(o + O_MAGICOFF)) == OBJ_MAGIC; }
 
 /* Width, height, format and pitch of a level of any pixel container. */
+static int linear_format(uint32_t fmt) {
+    return (fmt >= 0x10 && fmt <= 0x20) || (fmt >= 0x2E && fmt <= 0x31) || (fmt >= 0x35 && fmt <= 0x37) || (fmt >= 0x3D && fmt <= 0x41);
+}
+
+/* Always decoded from the live Format and Size fields: the game edits the
+   headers of textures it created (it turns some into linear layouts). */
 static void describe(uint32_t o, uint32_t level, uint32_t *w, uint32_t *h, uint32_t *fmt, uint32_t *pitch) {
-    if (is_ours(o)) {
-        *w = RD32(MEM(o + O_WIDTH)); *h = RD32(MEM(o + O_HEIGHT)); *fmt = RD32(MEM(o + O_FMT));
-    } else {
-        uint32_t format = RD32(MEM(o + O_FORMAT)), size = RD32(MEM(o + O_SIZE));
-        *fmt = (format >> 8) & 0xff;
-        if (size) { *w = (size & 0xfff) + 1; *h = ((size >> 12) & 0xfff) + 1; }
-        else { *w = 1u << ((format >> 20) & 0xf); *h = 1u << ((format >> 24) & 0xf); }
-    }
+    uint32_t format = RD32(MEM(o + O_FORMAT)), size = RD32(MEM(o + O_SIZE));
+    *fmt = (format >> 8) & 0xff;
+    if (size) { *w = (size & 0xfff) + 1; *h = ((size >> 12) & 0xfff) + 1; }
+    else if (is_ours(o)) { *w = RD32(MEM(o + O_WIDTH)); *h = RD32(MEM(o + O_HEIGHT)); }
+    else { *w = 1u << ((format >> 20) & 0xf); *h = 1u << ((format >> 24) & 0xf); }
     for (uint32_t i = 0; i < level; i++) { *w = *w > 1 ? *w / 2 : 1; *h = *h > 1 ? *h / 2 : 1; }
     if (*fmt == 0x0C) *pitch = (*w < 4 ? 1 : *w / 4) * 8;
     else if (*fmt == 0x0E || *fmt == 0x0F) *pitch = (*w < 4 ? 1 : *w / 4) * 16;
     else *pitch = *w * bytes_per_pixel(*fmt);
+    if (level == 0 && size >> 24) *pitch = ((size >> 24) + 1) * 64;
 }
+
+/* A pixel container with a non-zero Size field has rows at the pitch it
+   gives, whatever the format code says (Size is zero for swizzled and
+   compressed layouts). */
+int d3d_has_linear_layout(uint32_t o) { return RD32(MEM(o + O_SIZE)) != 0; }
 
 void d3d_describe(uint32_t o, uint32_t level, uint32_t *w, uint32_t *h, uint32_t *fmt, uint32_t *pitch) { describe(o, level, w, h, fmt, pitch); }
 
@@ -99,18 +109,19 @@ static uint32_t new_pixel_container(uint32_t type, uint32_t w, uint32_t h, uint3
     WR32(MEM(o + O_FMT), fmt); WR32(MEM(o + O_LEVELS), levels);
     uint32_t pitch = w * bytes_per_pixel(fmt);
     WR32(MEM(o + O_PITCH), pitch);
-    uint32_t bytes = (level_offset(o, levels) + 4095) & ~4095u;
-    bytes *= depth ? depth : 1;
-    WR32(MEM(o + O_BYTES), bytes);
-    WR32(MEM(o + O_DATA), alloc_or_die(bytes, 4096, "texture memory"));
-    /* encoded fields, so code that decodes them itself gets something sane */
+    /* the encoded fields first: describe() and level_offset() decode them */
     uint32_t lg2w = 0, lg2h = 0;
     while ((1u << lg2w) < w) lg2w++;
     while ((1u << lg2h) < h) lg2h++;
     uint32_t lg2d = 0;
     while (depth && (1u << lg2d) < depth) lg2d++;
     WR32(MEM(o + O_FORMAT), (fmt << 8) | ((depth ? 3 : 2) << 4) | ((levels & 0xf) << 16) | (lg2w << 20) | (lg2h << 24) | (lg2d << 28));
-    WR32(MEM(o + O_SIZE), ((w - 1) & 0xfff) | (((h - 1) & 0xfff) << 12) | (((pitch / 64 ? pitch / 64 - 1 : 0) & 0xff) << 24));
+    /* Size is only set for linear layouts (it carries the pitch); zero means swizzled or compressed */
+    WR32(MEM(o + O_SIZE), linear_format(fmt) ? ((w - 1) & 0xfff) | (((h - 1) & 0xfff) << 12) | (((pitch / 64 ? pitch / 64 - 1 : 0) & 0xff) << 24) : 0);
+    uint32_t bytes = (level_offset(o, levels) + 4095) & ~4095u;
+    bytes *= depth ? depth : 1;
+    WR32(MEM(o + O_BYTES), bytes);
+    WR32(MEM(o + O_DATA), alloc_or_die(bytes, 4096, "texture memory"));
     return o;
 }
 
@@ -186,8 +197,11 @@ HOOK(D3DDevice_SetViewport) {
     }
     RET(D3DDevice_SetViewport, 0);
 }
-HOOK(D3DDevice_SetRenderState_Simple) { if (g_render) r_set_rs_simple(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetRenderState_Simple, 0); }
-HOOK(D3DDevice_SetRenderState_Deferred) { if (g_render) r_set_rs_deferred(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetRenderState_Deferred, 0); }
+/* the three "deferred/simple" setters are __fastcall: first argument in ECX, second in EDX */
+#define ECX(ctx) RD32((ctx)->r + REG_ECX)
+#define EDX(ctx) RD32((ctx)->r + REG_EDX)
+HOOK(D3DDevice_SetRenderState_Simple) { if (g_render) r_set_rs_simple(ECX(ctx), EDX(ctx)); RET(D3DDevice_SetRenderState_Simple, 0); }
+HOOK(D3DDevice_SetRenderState_Deferred) { if (g_render) r_set_rs_deferred(ECX(ctx), EDX(ctx)); RET(D3DDevice_SetRenderState_Deferred, 0); }
 HOOK(D3DDevice_SetRenderState_CullMode) { if (g_render) r_set_rs(PC_RS_CULLMODE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_CullMode, 0); }
 HOOK(D3DDevice_SetRenderState_FogColor) { if (g_render) r_set_rs(PC_RS_FOGCOLOR, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_FogColor, 0); }
 HOOK(D3DDevice_SetRenderState_ShadowFunc) { RET(D3DDevice_SetRenderState_ShadowFunc, 0); }
@@ -196,7 +210,7 @@ HOOK(D3DDevice_SetRenderState_StencilFail) { if (g_render) r_set_rs(PC_RS_STENCI
 HOOK(D3DDevice_SetRenderState_TextureFactor) { if (g_render) r_set_rs(PC_RS_TEXTUREFACTOR, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_TextureFactor, 0); }
 HOOK(D3DDevice_SetRenderState_ZBias) { RET(D3DDevice_SetRenderState_ZBias, 0); }
 HOOK(D3DDevice_SetRenderState_ZEnable) { if (g_render) r_set_rs(PC_RS_ZENABLE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_ZEnable, 0); }
-HOOK(D3DDevice_SetTextureStageStateDeferred) { if (g_render) r_set_tss(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_SetTextureStageStateDeferred, 0); }
+HOOK(D3DDevice_SetTextureStageStateDeferred) { if (g_render) r_set_tss(ECX(ctx), EDX(ctx), ARG(ctx, 0)); RET(D3DDevice_SetTextureStageStateDeferred, 0); }
 HOOK(D3DDevice_SetTextureState_BorderColor) { if (g_render) r_set_tss(ARG(ctx, 0), 29, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_BorderColor, 0); }
 HOOK(D3DDevice_SetTextureState_TexCoordIndex) { if (g_render) r_set_tss(ARG(ctx, 0), 28, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_TexCoordIndex, 0); }
 HOOK(D3DDevice_SetTexture) { if (g_render) r_set_texture(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetTexture, 0); }
@@ -208,7 +222,13 @@ HOOK(D3DDevice_SetVertexShaderConstant) { RET(D3DDevice_SetVertexShaderConstant,
 HOOK(D3DDevice_SetPixelShader) { if (g_render) r_set_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_SetPixelShader, 0); }
 HOOK(D3DDevice_SetPixelShaderConstant) { RET(D3DDevice_SetPixelShaderConstant, 0); }
 static uint32_t g_handles = 0x1000;
-HOOK(D3DDevice_CreatePixelShader) { if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), g_handles++); RET(D3DDevice_CreatePixelShader, 0); }
+HOOK(D3DDevice_CreatePixelShader) {
+    /* (pPSDef, pHandle): the register-combiner setup, 66 dwords */
+    uint32_t def = ARG(ctx, 0), handle = g_handles++;
+    if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), handle);
+    if (g_render && def) r_create_pixel_shader(handle, (const uint32_t *)MEM(def));
+    RET(D3DDevice_CreatePixelShader, 0);
+}
 HOOK(D3DDevice_DeletePixelShader) { RET(D3DDevice_DeletePixelShader, 0); }
 HOOK(D3DDevice_CreateStateBlock) { if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), g_handles++); RET(D3DDevice_CreateStateBlock, 0); }
 HOOK(D3DDevice_CaptureStateBlock) { RET(D3DDevice_CaptureStateBlock, 0); }
