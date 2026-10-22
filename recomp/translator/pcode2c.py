@@ -585,10 +585,15 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
                 else:
                     out.write(FunctionTranslator(program, ok[a], known).translate() + '\n\n')
     def purge_bytes(f):
-        """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function."""
+        """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function.
+
+        Uses the control-flow walk, since the `ret` may sit in a shared epilogue
+        outside Ghidra's body for the function."""
         if f is None:
             return None
-        for ins in program.getListing().getInstructions(f.getBody(), True):
+        t = FunctionTranslator(program, f, set())
+        t.space_ = program.getAddressFactory().getDefaultAddressSpace()
+        for ins in t.collect_insns():
             if ins.getMnemonicString().upper() == 'RET':
                 return ins.getNumOperands() and int(ins.getScalar(0).getUnsignedValue()) or 0
         return 0

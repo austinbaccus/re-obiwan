@@ -23,6 +23,26 @@ void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
 
 #pragma comment(lib, "dbghelp.lib")
 
+/* The generated C carries each guest instruction as a comment on the line
+   before its code, so the PDB line of a host address names the guest
+   instruction: find the file and line, then scan back for the comment and
+   the enclosing L_ label. */
+static void print_guest_location(HANDLE proc, DWORD64 pc) {
+    IMAGEHLP_LINE64 line = {sizeof line};
+    DWORD disp = 0;
+    if (!SymGetLineFromAddr64(proc, pc, &disp, &line)) return;
+    FILE *f = fopen(line.FileName, "r");
+    if (!f) { fprintf(stderr, "         %s:%lu\n", line.FileName, line.LineNumber); return; }
+    static char buf[4096], comment[256] = "", label[64] = "";
+    for (DWORD n = 1; n <= line.LineNumber && fgets(buf, sizeof buf, f); n++) {
+        const char *c = strstr(buf, "/* ");
+        if (c) { strncpy(comment, c, sizeof comment - 1); comment[strcspn(comment, "\r\n")] = 0; }
+        if (buf[0] == 'L' && buf[1] == '_') { strncpy(label, buf, sizeof label - 1); label[strcspn(label, ":\r\n")] = 0; }
+    }
+    fclose(f);
+    fprintf(stderr, "         guest %s, last block %s  (%s:%lu)\n", comment, label, strrchr(line.FileName, '\\') ? strrchr(line.FileName, '\\') + 1 : line.FileName, line.LineNumber);
+}
+
 /* Print where a host crash happened. Recompiled functions are named after
    their guest address (f_XXXXXXXX), so the symbol says which guest function
    it was. */
@@ -54,6 +74,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
             fprintf(stderr, "    #%-2d %08llx %s+0x%llx\n", depth, frame.AddrPC.Offset, sym->Name, disp);
         else
             fprintf(stderr, "    #%-2d %08llx ?\n", depth, frame.AddrPC.Offset);
+        if (depth < 4) print_guest_location(proc, frame.AddrPC.Offset);
         if (!StackWalk64(IMAGE_FILE_MACHINE_I386, proc, GetCurrentThread(), &frame, &cc, NULL,
                          SymFunctionTableAccess64, SymGetModuleBase64, NULL) || !frame.AddrPC.Offset)
             break;

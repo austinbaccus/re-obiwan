@@ -16,7 +16,7 @@
 #include "kernel.h"
 
 #define HOOK(name) void hook_##name(Ctx *ctx)
-#define RET(name, v) do { SET_EAX(ctx, (v)); RET_STDCALL(ctx, HOOKARGS_##name); return; } while (0)
+#define RET(name, v) do { trace("hook %s -> %08x (pops %d)", #name, (uint32_t)(v), HOOKARGS_##name); SET_EAX(ctx, (v)); RET_STDCALL(ctx, HOOKARGS_##name); return; } while (0)
 
 #define OBJ_SIZE 0x40
 #define OBJ_MAGIC 0x4F424A44u
@@ -87,7 +87,9 @@ static uint32_t new_pixel_container(uint32_t type, uint32_t w, uint32_t h, uint3
     uint32_t lg2w = 0, lg2h = 0;
     while ((1u << lg2w) < w) lg2w++;
     while ((1u << lg2h) < h) lg2h++;
-    WR32(MEM(o + O_FORMAT), (fmt << 8) | (2 << 4) | ((levels & 0xf) << 16) | (lg2w << 20) | (lg2h << 24));
+    uint32_t lg2d = 0;
+    while (depth && (1u << lg2d) < depth) lg2d++;
+    WR32(MEM(o + O_FORMAT), (fmt << 8) | ((depth ? 3 : 2) << 4) | ((levels & 0xf) << 16) | (lg2w << 20) | (lg2h << 24) | (lg2d << 28));
     WR32(MEM(o + O_SIZE), ((w - 1) & 0xfff) | (((h - 1) & 0xfff) << 12) | (((pitch / 64 ? pitch / 64 - 1 : 0) & 0xff) << 24));
     return o;
 }
@@ -227,9 +229,16 @@ HOOK(D3DResource_Register) {
     RET(D3DResource_Register, 0);
 }
 HOOK(D3DResource_GetType) {
-    uint32_t t = (RD32(MEM(ARG(ctx, 0) + O_COMMON)) >> 16) & 7;
+    uint32_t o = ARG(ctx, 0);
+    uint32_t t = (RD32(MEM(o + O_COMMON)) >> 16) & 7;
     static const uint32_t map[8] = {6, 7, 8, 9, 3, 1, 10, 0}; /* D3DRESOURCETYPE */
-    RET(D3DResource_GetType, map[t]);
+    uint32_t r = map[t];
+    if (t == T_TEXTURE) { /* textures: 2D, volume (dimensions 3) or cube */
+        uint32_t format = RD32(MEM(o + O_FORMAT));
+        if (is_ours(o) ? RD32(MEM(o + O_DEPTH)) != 0 : ((format >> 4) & 0xf) == 3) r = 4;
+        else if (format & 4) r = 5;
+    }
+    RET(D3DResource_GetType, r);
 }
 HOOK(D3DResource_BlockUntilNotBusy) { RET(D3DResource_BlockUntilNotBusy, 0); }
 HOOK(D3DBaseTexture_GetLevelCount) {

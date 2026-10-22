@@ -8,7 +8,7 @@
 #include "kernel.h"
 
 #define HOOK(name) void hook_##name(Ctx *ctx)
-#define RET(name, v) do { SET_EAX(ctx, (v)); RET_STDCALL(ctx, HOOKARGS_##name); return; } while (0)
+#define RET(name, v) do { trace("hook %s -> %08x (pops %d)", #name, (uint32_t)(v), HOOKARGS_##name); SET_EAX(ctx, (v)); RET_STDCALL(ctx, HOOKARGS_##name); return; } while (0)
 
 /* Objects handed to the game: a vtable whose every slot is a host "virtual
    call" id, so a method we have not implemented reports its slot number
