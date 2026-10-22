@@ -585,9 +585,11 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         return prev in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB) or prev3 == 0xC2
 
     # Code pointers in data: vtables without RTTI (XDK libraries, and game
-    # classes without a locator), callback tables. Only addresses whose
-    # preceding bytes end a function are taken, and make_function never
-    # clears existing code or data, so a stray constant cannot do harm.
+    # classes without a locator), callback tables. Every pointer into code
+    # that is (or can become) an instruction start is made a function.
+    # Splitting a real function this way is harmless: the control-flow walk
+    # follows fall-through into the new entry and turns jumps to it into
+    # tail calls, and make_function never clears existing code or data.
     pointer_targets = set()
     for b in memory.getBlocks():
         if b.getName() not in ('.rdata', '.data'):
@@ -597,7 +599,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             v = memory.getInt(a_) & 0xFFFFFFFF
             if 0x11000 <= v < 0x3bc220:
                 t = space.getAddress(v)
-                if looks_like_entry(t):
+                if fm.getFunctionAt(t) is None and any(cb.contains(t) for cb in code_blocks):
                     pointer_targets.add(t)
             a_ = a_.add(4)
     def make_function(addr):
@@ -605,13 +607,6 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         undefined; never disturb defined data (jump tables) or other functions."""
         if fm.getFunctionAt(addr) is not None:
             return False
-        if fm.getFunctionContaining(addr) is not None:
-            # inside another function's (often over-wide) body: only split it
-            # where the preceding bytes end a function
-            prev = memory.getByte(addr.subtract(1)) & 0xFF
-            prev3 = memory.getByte(addr.subtract(3)) & 0xFF
-            if prev not in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB) and prev3 != 0xC2:
-                return False
         if listing.getInstructionAt(addr) is None:
             cu = listing.getCodeUnitAt(addr)
             if cu is None or listing.getDefinedDataContaining(addr) is not None or listing.getInstructionContaining(addr) is not None:
