@@ -159,6 +159,10 @@ and its GDB stub lets us step through the original code alongside Ghidra.
 
 ## What comes next
 
+The binary map for the static recompiler (sections, kernel imports, library
+ranges, entry point and main loop, recompilation hazards) is in
+[docs/recomp](docs/recomp/README.md).
+
 This environment only covers the analysis side. The rebuilt game will be
 compiled and run on Windows itself, because it has to replace the Xbox's
 Direct3D 8, audio and controller APIs with PC equivalents. That toolchain will be
