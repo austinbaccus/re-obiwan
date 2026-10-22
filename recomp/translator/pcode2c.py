@@ -208,11 +208,49 @@ class FunctionTranslator:
             blo, bcompact, _ = mlist[i]
             self.ublock[lo] = bcompact + (lo - blo)
 
+    def collect_insns(self):
+        """Walk the control flow from the entry instead of trusting Ghidra's body.
+
+        MSVC shares tail blocks between functions and Ghidra assigns each block
+        to one owner, so a function can jump into a block that is not in its
+        body and is not a function entry. Following jumps and fall-throughs
+        from the entry (stopping at other functions' entries, which become
+        tail calls) gives every block this function can reach.
+        """
+        listing, fm = self.program.getListing(), self.program.getFunctionManager()
+        start = listing.getInstructionAt(self.space_.getAddress(self.entry))
+        if start is None:
+            return []
+        seen, order, work = set(), [], [start]
+        while work:
+            ins = work.pop()
+            a = ins.getAddress().getOffset()
+            if a in seen:
+                continue
+            seen.add(a)
+            order.append(ins)
+            ft = ins.getFallThrough()
+            if ft is not None:
+                nxt = listing.getInstructionAt(ft)
+                if nxt is not None:
+                    work.append(nxt)
+            flow = ins.getFlowType()
+            if flow.isJump():
+                for t in ins.getFlows():
+                    to = t.getOffset()
+                    if to == self.entry or fm.getFunctionAt(t) is not None:
+                        continue  # a jump to a function entry stays a tail call
+                    nxt = listing.getInstructionAt(t)
+                    if nxt is not None:
+                        work.append(nxt)
+        order.sort(key=lambda i: i.getAddress().getOffset())
+        return order
+
     def translate(self):
         listing = self.program.getListing()
         self.body = self.func.getBody()
         self.space_ = self.program.getAddressFactory().getDefaultAddressSpace()
-        self.insns = list(listing.getInstructions(self.body, True))
+        self.insns = self.collect_insns()
         self.insn_addrs = {i.getAddress().getOffset() for i in self.insns}
         self.labels_used.add(f'L_{self.entry:08x}')
         self.collect_uniques()

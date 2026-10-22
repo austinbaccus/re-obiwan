@@ -115,7 +115,7 @@ void rt_pmaddwd(void *o, const void *a, const void *b);
 void rt_psubsw(void *o, const void *a, const void *b);
 void rt_packssdw(void *o, const void *a, const void *b);
 void rt_psllw(void *o, const void *a, uint64_t count);
-void rt_pshufw(void *o, const void *a, uint64_t imm);
+void rt_pshufw(void *o, const void *dst_in, const void *a, uint64_t imm); /* Ghidra passes the destination as an input too */
 
 double rt_fpatan(double y, double x);
 double rt_f2xm1(double x);
@@ -124,6 +124,7 @@ double rt_fscale(double x, double s);
 _Noreturn void rt_trap(Ctx *ctx, TrapKind kind, uint32_t addr);
 void rt_call(Ctx *ctx, uint32_t addr);
 extern void (*g_kernel_call)(Ctx *ctx, uint32_t ordinal); /* set by the host runtime */
+extern void (*g_host_vcall)(Ctx *ctx, uint32_t id);      /* vtable slots of host-provided objects */
 extern int g_trace_calls;
 void rt_jump(Ctx *ctx, uint32_t addr);
 void rt_interrupt(Ctx *ctx, uint32_t addr, uint32_t vector);

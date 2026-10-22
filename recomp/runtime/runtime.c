@@ -34,7 +34,8 @@ void rt_psllw(void *o, const void *a, uint64_t c) {
     for (int i = 0; i < 4; i++) x[i] = c > 15 ? 0 : (uint16_t)(x[i] << c);
     memcpy(o, x, 8);
 }
-void rt_pshufw(void *o, const void *a, uint64_t imm) {
+void rt_pshufw(void *o, const void *dst_in, const void *a, uint64_t imm) {
+    (void)dst_in;
     uint16_t x[4], r[4];
     memcpy(x, a, 8);
     for (int i = 0; i < 4; i++) r[i] = x[(imm >> (2 * i)) & 3];
@@ -127,11 +128,17 @@ GuestFn rt_lookup(uint32_t addr) {
 }
 
 void (*g_kernel_call)(Ctx *ctx, uint32_t ordinal);
+void (*g_host_vcall)(Ctx *ctx, uint32_t id);
 
 void rt_call(Ctx *ctx, uint32_t addr) {
     if (addr >= 0xFFFF0000u) { /* patched kernel thunk slot */
         if (!g_kernel_call) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
         g_kernel_call(ctx, addr & 0xFFFF);
+        return;
+    }
+    if (addr >= 0xFFFE0000u) { /* vtable slot of a host-provided COM object */
+        if (!g_host_vcall) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
+        g_host_vcall(ctx, addr & 0xFFFF);
         return;
     }
     if ((addr & 0xFFFF0000u) == 0xDEAD0000u) return; /* host-pushed return address: thread or callback ends */

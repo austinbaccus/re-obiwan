@@ -19,6 +19,8 @@
 #include "kernel.h"
 #include "xbe_image.h"
 
+void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
+
 #pragma comment(lib, "dbghelp.lib")
 
 /* Print where a host crash happened. Recompiled functions are named after
@@ -91,6 +93,7 @@ static int run(int argc, char **argv) {
     snprintf(hdd_dir, sizeof hdd_dir, "%s\\xbox_hdd", exe);
     kernel_init(xbe.kernel_thunk, game_dir, hdd_dir);
     g_kernel_call = kernel_call;
+    g_host_vcall = host_vcall;
     fprintf(stderr, "obiwan: image %08x..%08x entry %08x, game files %s, hdd %s\n", xbe.base, xbe.base + xbe.size,
             xbe.entry, game_dir, hdd_dir);
 

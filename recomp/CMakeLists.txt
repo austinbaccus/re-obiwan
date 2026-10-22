@@ -27,7 +27,7 @@ endif()
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     # The harness proper, loaded at a normal address.
     # hooks_xapi/kernel satisfy the hook_* symbols the generated code references
-    add_library(difftest_core SHARED tests/difftest.c host/hooks_xapi.c host/hooks_d3d.c host/kernel.c)
+    add_library(difftest_core SHARED tests/difftest.c host/hooks_xapi.c host/hooks_d3d.c host/hooks_dsound.c host/kernel.c)
     target_include_directories(difftest_core PRIVATE host)
     target_compile_options(difftest_core PRIVATE /wd4996)
     target_link_libraries(difftest_core PRIVATE guest shell32 user32)
@@ -41,7 +41,7 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     add_dependencies(difftest difftest_core)
 
     # The game itself: host kernel + hooks + recompiled code, entered the same way.
-    add_library(obiwan_core SHARED host/boot.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c runtime/xbe_image.c)
+    add_library(obiwan_core SHARED host/boot.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c host/hooks_dsound.c runtime/xbe_image.c)
     target_include_directories(obiwan_core PRIVATE host)
     target_link_libraries(obiwan_core PRIVATE guest shell32 user32 dbghelp)
     target_compile_options(obiwan_core PRIVATE /wd4996)
