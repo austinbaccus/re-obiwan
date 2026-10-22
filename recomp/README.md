@@ -65,7 +65,7 @@ docker compose exec ghidra-mcp bash -c '
   rm -rf /tmp/gcopy && mkdir /tmp/gcopy &&
   cp -r /workspace/ghidra/obiwan.gpr /workspace/ghidra/obiwan.rep /tmp/gcopy/ &&
   find /tmp/gcopy -name "*.lock*" -delete &&
-  /opt/pyghidra-mcp/bin/python3 /workspace/recomp/translator/pcode2c.py /tmp/gcopy /workspace/build/generated leaf'
+  /opt/pyghidra-mcp/bin/python3 /workspace/recomp/translator/pcode2c.py /tmp/gcopy /workspace/build/generated all /workspace/recomp/host/hooks.csv 12'
 
 # 2. Build (Windows, Visual Studio 2022 with C++ tools)
 .\recomp\build.ps1
@@ -82,9 +82,12 @@ The game reads its files from the folder that holds `default.xbe` and keeps
 its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
 next to the executable.
 
-The last argument of the translator picks what to emit: `leaf` (functions
+The translator's third argument picks what to emit: `leaf` (functions
 with no calls, computed jumps, special instructions or `fs:` accesses: the
-ones the harness can test in isolation), `all`, or a file of addresses.
+ones the harness can test in isolation), `all`, or a file of addresses. The
+fourth is `host/hooks.csv`, the fifth the number of worker processes: each
+works on its own copy of the scratch project (about 350 MB and a JVM each),
+and 12 of them turn the 25-minute single-process run into 9 minutes.
 `build/generated/meta.json` always lists every function with its translation
 status and features.
 

@@ -24,8 +24,11 @@ sections), `all`, or a file with one hex address per line. Coverage statistics f
 are always written to <out-dir>/meta.json.
 """
 import collections
+import glob
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import pyghidra
@@ -77,6 +80,23 @@ def st(size):
     return f'int{size * 8}_t'
 
 
+def force_disassemble(program, addr):
+    """Flow reaches these bytes, so they are code: a mis-decoded instruction
+    may start inside the real one, or Ghidra typed them as data (a lone
+    shared `ret`); clear and disassemble. Returns the instruction or None."""
+    listing, memory = program.getListing(), program.getMemory()
+    block = memory.getBlock(addr)
+    if block is None or not block.isExecute():
+        return None
+    data = listing.getDefinedDataContaining(addr)
+    if data is not None:
+        listing.clearCodeUnits(data.getMinAddress(), data.getMaxAddress(), False)
+    else:
+        listing.clearCodeUnits(addr, addr.add(15), False)
+    DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
+    return listing.getInstructionAt(addr)
+
+
 class FunctionTranslator:
     def __init__(self, program, func, known):
         self.program = program
@@ -91,6 +111,7 @@ class FunctionTranslator:
         self.uniq_size = 0
         self.needs_dispatch = False  # function has computed jumps: emit one shared switch
         self.resumable = False       # can be entered mid-body (SEH/C++ EH continuations, setjmp)
+        self.disassembled = []       # addresses this walk disassembled on demand
 
     # ---- varnodes -------------------------------------------------------
     def space(self, v):
@@ -233,23 +254,13 @@ class FunctionTranslator:
 
         def ins_at(addr):
             # flow can land on bytes Ghidra never disassembled; do it now (the
-            # project is a scratch copy opened for writing and never saved)
+            # project is a scratch copy)
             ins = listing.getInstructionAt(addr)
             if ins is None:
-                block = memory.getBlock(addr)
-                if block is not None and block.isExecute():
-                    # flow reaches these bytes, so they are code: a mis-decoded
-                    # instruction may start inside the real one, or Ghidra typed
-                    # them as data (a lone shared `ret`); clear and disassemble
-                    data = listing.getDefinedDataContaining(addr)
-                    if data is not None:
-                        listing.clearCodeUnits(data.getMinAddress(), data.getMaxAddress(), False)
-                    else:
-                        listing.clearCodeUnits(addr, addr.add(15), False)
-                    DisassembleCommand(addr, None, True).applyTo(self.program, TaskMonitor.DUMMY)
-                    ins = listing.getInstructionAt(addr)
-                    if ins is not None:
-                        self.features['redisassembled'] += 1
+                ins = force_disassemble(self.program, addr)
+                if ins is not None:
+                    self.features['redisassembled'] += 1
+                    self.disassembled.append(addr.getOffset())
             return ins
 
         start = ins_at(self.space_.getAddress(self.entry))
@@ -655,7 +666,8 @@ def load_hooks(path):
     return hooks
 
 
-def main(project_dir, out_dir, select='leaf', hooks_path=None):
+def main(project_dir, out_dir, select='leaf', hooks_path=None, jobs='1'):
+    jobs = int(jobs)
     hooks = load_hooks(hooks_path)
     load_resumable()
     project = GhidraProject.openProject(project_dir, 'obiwan', False)
@@ -750,43 +762,50 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     if created:
         print(f'created {created} functions for direct-call targets', file=sys.stderr)
 
-    funcs = [f for f in fm.getFunctions(True)
-             if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
+    def all_funcs():
+        return sorted(f.getEntryPoint().getOffset() for f in fm.getFunctions(True)
+                      if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute())
 
     explicit = None
     if select not in ('leaf', 'all', 'text'):
         explicit = {int(x, 16) for x in open(select).read().split()}
 
+    def save_master(tx):
+        """Commit the scratch copy so worker processes can open copies of it."""
+        program.endTransaction(tx, True)
+        project.save(program)
+        return program.startTransaction('translate (scratch)')
+
     # First pass: translate everything (with an empty `known` set) to gather
     # coverage and features, then emit the selected set. Translating
     # disassembles code on demand, which can expose calls to functions that
     # did not exist yet, so repeat the closure and the pass until it settles.
-    meta, ok = {}, {}
+    # With jobs > 1 the passes run in worker processes on copies of the
+    # project; the master mirrors their on-demand disassembly so its listing
+    # (and the next round's copies) match what they saw.
+    meta, ok = {}, set()
+    addrs = all_funcs()
     for _round in range(5):
-        # every function is walked again each round: a walk can grow once code
-        # it reaches has been disassembled, and the emission pass must see the
-        # same listing this pass saw
-        meta, ok = {}, {}
-        for f in funcs:
-            a = f.getEntryPoint().getOffset()
-            t = FunctionTranslator(program, f, set())
-            try:
-                code = t.translate()
-                status = 'ok'
-            except Unsupported as e:
-                code, status = None, f'unsupported: {e}'
-            except Exception as e:  # noqa: BLE001 - keep going and report
-                code, status = None, f'error: {e}'
-            meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
-                       'features': dict(t.features)}
-            if code is not None:
-                ok[a] = f
+        meta, ok, disassembled = {}, set(), set()
+        if jobs > 1:
+            tx = save_master(tx)
+            shards = [addrs[i::jobs] for i in range(jobs)]
+            for r in run_workers(project_dir, [{'mode': 'survey', 'addrs': sh} for sh in shards]):
+                meta.update({int(k): v for k, v in r['meta'].items()})
+                ok.update(r['ok'])
+                disassembled.update(r['disassembled'])
+            for a in sorted(disassembled):
+                if listing.getInstructionAt(space.getAddress(a)) is None:
+                    force_disassemble(program, space.getAddress(a))
+        else:
+            m, o, d = survey(program, addrs)
+            meta.update(m)
+            ok.update(o)
         more = call_target_closure()
         if not more:
             break
         print(f'round {_round + 1}: {more} more functions found by disassembling on demand', file=sys.stderr)
-        funcs = [f for f in fm.getFunctions(True)
-                 if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
+        addrs = all_funcs()
 
     def is_leaf(a):
         ft = meta[a]['features']
@@ -807,34 +826,31 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     for a, name in hooks.items():
         meta.setdefault(a, {'name': name, 'status': 'hook', 'block': '', 'features': {}})
 
-    extent = {}  # address -> (first, last instruction address, resumable)
     os.makedirs(out_dir, exist_ok=True)
     for old in os.listdir(out_dir):
         if old.startswith('funcs_') and old.endswith('.c'):
             os.remove(os.path.join(out_dir, old))
-    for n in range(0, len(chosen), FUNCS_PER_FILE):
-        part = chosen[n:n + FUNCS_PER_FILE]
-        with open(os.path.join(out_dir, f'funcs_{n // FUNCS_PER_FILE:04d}.c'), 'w') as out:
-            out.write('/* Generated by recomp/translator/pcode2c.py from the game executable. Do not commit. */\n')
-            out.write('#include "guest.h"\n#include "funcs.h"\n\n')
-            for a in part:
-                if a in hooks:
-                    # the host runtime provides this one; keep the symbol so direct calls link
-                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
-                    extent[a] = (a, a, False)
-                    continue
-                try:
-                    t = FunctionTranslator(program, ok[a], known)
-                    code = t.translate()
-                    extent[a] = (min(t.insn_addrs), max(t.insn_addrs), t.resumable)
-                    meta[a]['resumable'] = t.resumable
-                except Exception as e:  # noqa: BLE001 - keep the build consistent
-                    extent[a] = (a, a, False)
-                    print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
-                    meta[a]['status'] = f'emit failed: {e}'
-                    code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {meta[a]["name"]}: {e} */' + '\n'
-                            + f'    rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u);' + '\n}')
-                out.write(code + '\n\n')
+    chunks = [(n // FUNCS_PER_FILE, chosen[n:n + FUNCS_PER_FILE]) for n in range(0, len(chosen), FUNCS_PER_FILE)]
+    names = {a: meta[a]['name'] for a in chosen}
+    extent = {}  # address -> (first, last instruction address, resumable)
+    if jobs > 1:
+        tx = save_master(tx)
+        job_chunks = [chunks[i::jobs] for i in range(jobs)]
+        job = {'mode': 'emit', 'known': sorted(known), 'hooks': {str(a): n for a, n in hooks.items()},
+               'names': {str(a): n for a, n in names.items()}, 'out_dir': out_dir}
+        for r in run_workers(project_dir, [dict(job, chunks=jc) for jc in job_chunks]):
+            extent.update({int(k): tuple(v) for k, v in r['extent'].items()})
+            for k, st in r['status'].items():
+                meta[int(k)]['status'] = st
+            for k, res in r['resumable'].items():
+                meta[int(k)]['resumable'] = res
+    else:
+        r = emit(program, chunks, known, hooks, names, out_dir)
+        extent.update({int(k): tuple(v) for k, v in r['extent'].items()})
+        for k, st in r['status'].items():
+            meta[int(k)]['status'] = st
+        for k, res in r['resumable'].items():
+            meta[int(k)]['resumable'] = res
 
     def purge_bytes(f):
         """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function.
@@ -868,7 +884,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             out.write(f'void f_{a:08x}(Ctx *ctx);\n')
         for a, name in sorted(hooks.items()):
             out.write(f'void hook_{name}(Ctx *ctx); /* 0x{a:08x} */\n')
-            pb = purge_bytes(ok.get(a))
+            pb = purge_bytes(fm.getFunctionAt(space.getAddress(a)) if a in ok else None)
             if pb is not None:
                 out.write(f'#define HOOKARGS_{name} {pb // 4} /* stdcall arguments popped by the original */\n')
     with open(os.path.join(out_dir, 'functab.c'), 'w') as out:
@@ -887,5 +903,107 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     project.close()
 
 
+def survey(program, addrs):
+    """Translate every function in addrs with no callees known: its status and
+    features, plus the addresses the walks disassembled on demand."""
+    fm, memory = program.getFunctionManager(), program.getMemory()
+    space = program.getAddressFactory().getDefaultAddressSpace()
+    meta, ok, disassembled = {}, [], []
+    for a in addrs:
+        f = fm.getFunctionAt(space.getAddress(a))
+        if f is None:
+            continue
+        t = FunctionTranslator(program, f, set())
+        try:
+            t.translate()
+            status = 'ok'
+        except Unsupported as e:
+            status = f'unsupported: {e}'
+        except Exception as e:  # noqa: BLE001 - keep going and report
+            status = f'error: {e}'
+        meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
+                   'features': dict(t.features)}
+        if status == 'ok':
+            ok.append(a)
+        disassembled += t.disassembled
+    return meta, ok, disassembled
+
+
+def emit(program, chunks, known, hooks, names, out_dir):
+    """Write funcs_NNNN.c for each (file index, addresses) chunk."""
+    fm = program.getFunctionManager()
+    space = program.getAddressFactory().getDefaultAddressSpace()
+    extent, status, resumable = {}, {}, {}
+    for index, part in chunks:
+        with open(os.path.join(out_dir, f'funcs_{index:04d}.c'), 'w') as out:
+            out.write('/* Generated by recomp/translator/pcode2c.py from the game executable. Do not commit. */\n')
+            out.write('#include "guest.h"\n#include "funcs.h"\n\n')
+            for a in part:
+                if a in hooks:
+                    # the host runtime provides this one; keep the symbol so direct calls link
+                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
+                    extent[a] = (a, a, False)
+                    continue
+                try:
+                    t = FunctionTranslator(program, fm.getFunctionAt(space.getAddress(a)), known)
+                    code = t.translate()
+                    extent[a] = (min(t.insn_addrs), max(t.insn_addrs), t.resumable)
+                    resumable[a] = t.resumable
+                except Exception as e:  # noqa: BLE001 - keep the build consistent
+                    extent[a] = (a, a, False)
+                    print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
+                    status[a] = f'emit failed: {e}'
+                    code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {names[a]}: {e} */' + '\n'
+                            + f'    rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u);' + '\n}')
+                out.write(code + '\n\n')
+    return {'extent': {str(a): list(v) for a, v in extent.items()}, 'status': {str(a): v for a, v in status.items()},
+            'resumable': {str(a): v for a, v in resumable.items()}}
+
+
+def run_workers(project_dir, jobs):
+    """Run one worker process per job on its own copy of the (saved) project;
+    returns their result dicts in order."""
+    procs = []
+    for i, job in enumerate(jobs):
+        wdir = f'{project_dir.rstrip("/")}_w{i}'
+        shutil.rmtree(wdir, ignore_errors=True)
+        shutil.copytree(project_dir, wdir)
+        for lock in set(glob.glob(os.path.join(wdir, '**', '*.lock*'), recursive=True)):
+            os.remove(lock)
+        job_path, res_path = wdir + '.job.json', wdir + '.result.json'
+        json.dump(job, open(job_path, 'w'))
+        if os.path.exists(res_path):
+            os.remove(res_path)
+        procs.append((subprocess.Popen([sys.executable, os.path.abspath(__file__), '--worker', wdir, job_path, res_path]), res_path, wdir))
+    results = []
+    for proc, res_path, wdir in procs:
+        if proc.wait() != 0 or not os.path.exists(res_path):
+            raise RuntimeError(f'worker {wdir} failed')
+        results.append(json.load(open(res_path)))
+        shutil.rmtree(wdir, ignore_errors=True)
+    return results
+
+
+def worker(copy_dir, job_path, res_path):
+    job = json.load(open(job_path))
+    load_resumable()
+    project = GhidraProject.openProject(copy_dir, 'obiwan', False)
+    program = project.openProgram('/', PROGRAM, False)
+    tx = program.startTransaction('worker (scratch, never saved)')
+    if job['mode'] == 'survey':
+        meta, ok, disassembled = survey(program, job['addrs'])
+        result = {'meta': {str(a): m for a, m in meta.items()}, 'ok': ok, 'disassembled': disassembled}
+    else:
+        result = emit(program, [(i, part) for i, part in job['chunks']], set(job['known']),
+                      {int(k): v for k, v in job['hooks'].items()}, {int(k): v for k, v in job['names'].items()},
+                      job['out_dir'])
+    program.endTransaction(tx, False)
+    project.close()
+    json.dump(result, open(res_path, 'w'))
+
+
 if __name__ == '__main__':
-    main(*sys.argv[1:])
+    if sys.argv[1:2] == ['--worker']:
+        worker(*sys.argv[2:5])
+    else:
+        main(*sys.argv[1:])
