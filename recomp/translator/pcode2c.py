@@ -292,9 +292,11 @@ class FunctionTranslator:
                     base = obj.getUnsignedValue()
         if base is None or '*0x4' not in str(ins):
             return []
-        body = self.func.getBody()
-        lo = min(self.entry, body.getMinAddress().getOffset()) - 0x1000
-        hi = max(self.entry + 0x8000, body.getMaxAddress().getOffset() + 0x1000)
+        # any entry inside the section that holds this function counts: bodies
+        # of the game's biggest functions are split across several Ghidra
+        # functions, so a tighter window misses cases
+        block = memory.getBlock(self.space_.getAddress(self.entry))
+        lo, hi = block.getStart().getOffset(), block.getEnd().getOffset() + 1
         out, misses = [], 0
         for n in range(1024):
             try:
