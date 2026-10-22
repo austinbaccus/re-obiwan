@@ -605,8 +605,15 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     def make_function(addr):
         """Create a function at addr if the bytes there are an instruction or
         undefined; never disturb defined data (jump tables) or other functions."""
-        if fm.getFunctionAt(addr) is not None or fm.getFunctionContaining(addr) is not None:
+        if fm.getFunctionAt(addr) is not None:
             return False
+        if fm.getFunctionContaining(addr) is not None:
+            # inside another function's (often over-wide) body: only split it
+            # where the preceding bytes end a function
+            prev = memory.getByte(addr.subtract(1)) & 0xFF
+            prev3 = memory.getByte(addr.subtract(3)) & 0xFF
+            if prev not in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB) and prev3 != 0xC2:
+                return False
         if listing.getInstructionAt(addr) is None:
             cu = listing.getCodeUnitAt(addr)
             if cu is None or listing.getDefinedDataContaining(addr) is not None or listing.getInstructionContaining(addr) is not None:
