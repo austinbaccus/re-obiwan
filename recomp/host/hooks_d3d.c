@@ -187,6 +187,24 @@ HOOK(D3DDevice_DrawVerticesUP) { RET(D3DDevice_DrawVerticesUP, 0); }
 HOOK(D3DDevice_DrawIndexedVertices) { RET(D3DDevice_DrawIndexedVertices, 0); }
 HOOK(D3DDevice_DrawIndexedVerticesUP) { RET(D3DDevice_DrawIndexedVerticesUP, 0); }
 
+HOOK(D3DTexture_GetLevelDesc) {
+    /* (pThis, Level, pDesc): Format, Type, Usage, Size, Width, Height, Depth (volume textures) */
+    uint32_t o = ARG(ctx, 0), level = ARG(ctx, 1), d = ARG(ctx, 2), w, h, fmt, pitch;
+    describe(o, level, &w, &h, &fmt, &pitch);
+    uint32_t depth = is_ours(o) ? RD32(MEM(o + O_DEPTH)) : 0;
+    for (uint32_t i = 0; i < level && depth > 1; i++) depth /= 2;
+    uint32_t t = (RD32(MEM(o + O_COMMON)) >> 16) & 7;
+    WR32(MEM(d + 0), fmt); WR32(MEM(d + 4), t == T_SURFACE ? 1 : depth ? 2 : 3); WR32(MEM(d + 8), 0);
+    WR32(MEM(d + 12), pitch * h * (depth ? depth : 1)); WR32(MEM(d + 16), w); WR32(MEM(d + 20), h);
+    WR32(MEM(d + 24), depth ? depth : 1);
+    RET(D3DTexture_GetLevelDesc, 0);
+}
+HOOK(D3D_AllocContiguousMemory) {
+    /* (Size, Alignment) */
+    uint32_t a = kmem_alloc(ARG(ctx, 0) ? ARG(ctx, 0) : 16, ARG(ctx, 1) ? ARG(ctx, 1) : 4096);
+    RET(D3D_AllocContiguousMemory, a);
+}
+
 /* ---- XGraphics shader assembler ---------------------------------------- */
 uint32_t make_xgbuffer(uint32_t size); /* hooks_dsound.c */
 

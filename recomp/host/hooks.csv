@@ -130,3 +130,6 @@
 0x003ac5a3,CDirectSoundStream_SetFrequency
 0x003ac5b7,CDirectSoundStream_SetMixBins
 0x003acc70,DirectSoundCreateBuffer
+# D3D helpers the game calls directly besides the API (found by scanning the generated code)
+0x0036de40,D3DTexture_GetLevelDesc
+0x0036e090,D3D_AllocContiguousMemory

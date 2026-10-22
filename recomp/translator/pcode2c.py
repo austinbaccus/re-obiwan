@@ -231,10 +231,15 @@ class FunctionTranslator:
             ins = listing.getInstructionAt(addr)
             if ins is None:
                 block = memory.getBlock(addr)
-                if block is not None and block.isExecute() and listing.getDefinedDataAt(addr) is None:
-                    # a mis-decoded instruction may start inside the real one
-                    # (Ghidra decoded from the wrong byte); clear it first
-                    listing.clearCodeUnits(addr, addr.add(15), False)
+                if block is not None and block.isExecute():
+                    # flow reaches these bytes, so they are code: a mis-decoded
+                    # instruction may start inside the real one, or Ghidra typed
+                    # them as data (a lone shared `ret`); clear and disassemble
+                    data = listing.getDefinedDataContaining(addr)
+                    if data is not None:
+                        listing.clearCodeUnits(data.getMinAddress(), data.getMaxAddress(), False)
+                    else:
+                        listing.clearCodeUnits(addr, addr.add(15), False)
                     DisassembleCommand(addr, None, True).applyTo(self.program, TaskMonitor.DUMMY)
                     ins = listing.getInstructionAt(addr)
                     if ins is not None:
