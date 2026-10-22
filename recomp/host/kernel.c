@@ -942,6 +942,11 @@ K(NtClose) {
 K(NtReadFile) {
     uint32_t h = ARG(ctx, 0), iosb = ARG(ctx, 4), buf = ARG(ctx, 5), len = ARG(ctx, 6), poff = ARG(ctx, 7);
     Obj *o = handle_get(h);
+    if (o && o->kind == OBJ_DIR) { /* raw volume read on a partition: the host directory has no sectors */
+        memset(MEM(buf), 0, len);
+        if (iosb) { WR32(MEM(iosb), 0); WR32(MEM(iosb + 4), len); }
+        RET(STATUS_SUCCESS_, 8);
+    }
     if (!o || o->kind != OBJ_FILE) RET(STATUS_INVALID_HANDLE_, 8);
     if (poff) {
         int64_t off = (int64_t)RD64(MEM(poff));
@@ -960,6 +965,10 @@ K(NtReadFile) {
 K(NtWriteFile) {
     uint32_t h = ARG(ctx, 0), iosb = ARG(ctx, 4), buf = ARG(ctx, 5), len = ARG(ctx, 6), poff = ARG(ctx, 7);
     Obj *o = handle_get(h);
+    if (o && o->kind == OBJ_DIR) { /* raw volume write (XAPI formatting the cache partition): accept and discard */
+        if (iosb) { WR32(MEM(iosb), 0); WR32(MEM(iosb + 4), len); }
+        RET(STATUS_SUCCESS_, 8);
+    }
     if (!o || o->kind != OBJ_FILE) RET(STATUS_INVALID_HANDLE_, 8);
     if (poff) {
         int64_t off = (int64_t)RD64(MEM(poff));
@@ -1086,9 +1095,23 @@ K(NtQueryDirectoryFile) {
 /* Volume and disk IOCTLs (cache partition format/verify): there is nothing
    to do on a host directory, so report success and no output. */
 static void ioctl_ok(Ctx *ctx) {
-    uint32_t iosb = ARG(ctx, 4), code = ARG(ctx, 5);
-    trace("ioctl %08x on handle %x: ok", code, ARG(ctx, 0));
-    if (iosb) { WR32(MEM(iosb), 0); WR32(MEM(iosb + 4), 0); }
+    /* (FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode,
+        InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength) */
+    uint32_t iosb = ARG(ctx, 4), code = ARG(ctx, 5), out = ARG(ctx, 8), outlen = ARG(ctx, 9);
+    uint32_t written = 0;
+    /* XAPI formats a fresh cache partition and asks the disk about it first */
+    if (code == 0x70000 && out && outlen >= 24) { /* IOCTL_DISK_GET_DRIVE_GEOMETRY: 8 GB disk */
+        WR64(MEM(out), 16383); WR32(MEM(out + 8), 12 /* FixedMedia */);
+        WR32(MEM(out + 12), 16); WR32(MEM(out + 16), 63); WR32(MEM(out + 20), 512);
+        written = 24;
+    } else if (code == 0x74004 && out && outlen >= 32) { /* IOCTL_DISK_GET_PARTITION_INFO: 750 MB partition */
+        WR64(MEM(out), 0x1000000ull); WR64(MEM(out + 8), 750ull << 20);
+        WR32(MEM(out + 16), 0); WR32(MEM(out + 20), 5); WR8(MEM(out + 24), 0x1f); WR8(MEM(out + 25), 0);
+        WR8(MEM(out + 26), 1); WR8(MEM(out + 27), 0);
+        written = 32;
+    }
+    trace("ioctl %08x on handle %x: ok (%u bytes out)", code, ARG(ctx, 0), written);
+    if (iosb) { WR32(MEM(iosb), 0); WR32(MEM(iosb + 4), written); }
     RET(STATUS_SUCCESS_, 10);
 }
 K(NtFsControlFile) { ioctl_ok(ctx); }

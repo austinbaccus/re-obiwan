@@ -114,3 +114,60 @@ HOOK(IDirectSound_SetPosition) { RET(IDirectSound_SetPosition, 0); }
 HOOK(IDirectSound_SetVelocity) { RET(IDirectSound_SetVelocity, 0); }
 HOOK(IDirectSound_SetI3DL2Listener) { RET(IDirectSound_SetI3DL2Listener, 0); }
 HOOK(IDirectSound_CommitDeferredSettings) { RET(IDirectSound_CommitDeferredSettings, 0); }
+
+/* ---- every other DirectSound entry point the game calls: accept and do nothing ---- */
+HOOK(IDirectSoundBuffer_Unlock) { RET(IDirectSoundBuffer_Unlock, 0); }
+HOOK(IDirectSoundBuffer_SetVolume) { RET(IDirectSoundBuffer_SetVolume, 0); }
+HOOK(IDirectSoundBuffer_SetFilter) { RET(IDirectSoundBuffer_SetFilter, 0); }
+HOOK(IDirectSoundBuffer_SetHeadroom) { RET(IDirectSoundBuffer_SetHeadroom, 0); }
+HOOK(IDirectSoundBuffer_SetMixBinVolumes_12) { RET(IDirectSoundBuffer_SetMixBinVolumes_12, 0); }
+HOOK(IDirectSoundBuffer_SetConeAngles) { RET(IDirectSoundBuffer_SetConeAngles, 0); }
+HOOK(IDirectSoundBuffer_SetConeOrientation) { RET(IDirectSoundBuffer_SetConeOrientation, 0); }
+HOOK(IDirectSoundBuffer_SetConeOutsideVolume) { RET(IDirectSoundBuffer_SetConeOutsideVolume, 0); }
+HOOK(IDirectSoundBuffer_SetMaxDistance) { RET(IDirectSoundBuffer_SetMaxDistance, 0); }
+HOOK(IDirectSoundBuffer_SetMinDistance) { RET(IDirectSoundBuffer_SetMinDistance, 0); }
+HOOK(IDirectSoundBuffer_SetPosition) { RET(IDirectSoundBuffer_SetPosition, 0); }
+HOOK(IDirectSoundBuffer_SetVelocity) { RET(IDirectSoundBuffer_SetVelocity, 0); }
+HOOK(IDirectSoundBuffer_SetLoopRegion) { RET(IDirectSoundBuffer_SetLoopRegion, 0); }
+HOOK(IDirectSoundBuffer_GetStatus) {
+    if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), 0); /* not playing */
+    RET(IDirectSoundBuffer_GetStatus, 0);
+}
+HOOK(IDirectSoundBuffer_GetCurrentPosition) {
+    if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), 0);
+    if (ARG(ctx, 2)) WR32(MEM(ARG(ctx, 2)), 0);
+    RET(IDirectSoundBuffer_GetCurrentPosition, 0);
+}
+HOOK(IDirectSoundBuffer_SetCurrentPosition) { RET(IDirectSoundBuffer_SetCurrentPosition, 0); }
+HOOK(IDirectSoundBuffer_Lock) {
+    /* (pThis, dwOffset, dwBytes, ppvAudioPtr1, pdwAudioBytes1, ppvAudioPtr2, pdwAudioBytes2, dwFlags):
+       hand out scratch memory the game can fill; nothing plays it */
+    uint32_t bytes = ARG(ctx, 2), pp1 = ARG(ctx, 3), pb1 = ARG(ctx, 4), pp2 = ARG(ctx, 5), pb2 = ARG(ctx, 6);
+    uint32_t mem = kmem_alloc(bytes ? bytes : 16, 16);
+    if (pp1) WR32(MEM(pp1), mem);
+    if (pb1) WR32(MEM(pb1), bytes);
+    if (pp2) WR32(MEM(pp2), 0);
+    if (pb2) WR32(MEM(pb2), 0);
+    RET(IDirectSoundBuffer_Lock, mem ? 0 : 0x88780032u /* DSERR_OUTOFMEMORY */);
+}
+HOOK(CDirectSoundStream_SetVolume) { RET(CDirectSoundStream_SetVolume, 0); }
+HOOK(CDirectSoundStream_SetFilter) { RET(CDirectSoundStream_SetFilter, 0); }
+HOOK(IDirectSoundStream_SetMixBinVolumes_12) { RET(IDirectSoundStream_SetMixBinVolumes_12, 0); }
+HOOK(IDirectSoundStream_SetConeAngles) { RET(IDirectSoundStream_SetConeAngles, 0); }
+HOOK(IDirectSoundStream_SetConeOrientation) { RET(IDirectSoundStream_SetConeOrientation, 0); }
+HOOK(IDirectSoundStream_SetConeOutsideVolume) { RET(IDirectSoundStream_SetConeOutsideVolume, 0); }
+HOOK(IDirectSoundStream_SetMaxDistance) { RET(IDirectSoundStream_SetMaxDistance, 0); }
+HOOK(IDirectSoundStream_SetMinDistance) { RET(IDirectSoundStream_SetMinDistance, 0); }
+HOOK(IDirectSoundStream_SetPosition) { RET(IDirectSoundStream_SetPosition, 0); }
+HOOK(IDirectSoundBuffer_SetFrequency) { RET(IDirectSoundBuffer_SetFrequency, 0); }
+HOOK(IDirectSoundBuffer_SetMixBins) { RET(IDirectSoundBuffer_SetMixBins, 0); }
+HOOK(IDirectSoundBuffer_Play) { RET(IDirectSoundBuffer_Play, 0); }
+HOOK(IDirectSoundBuffer_Stop) { RET(IDirectSoundBuffer_Stop, 0); }
+HOOK(CDirectSoundStream_SetFrequency) { RET(CDirectSoundStream_SetFrequency, 0); }
+HOOK(CDirectSoundStream_SetMixBins) { RET(CDirectSoundStream_SetMixBins, 0); }
+HOOK(DirectSoundCreateBuffer) {
+    /* (pdsbd, ppBuffer) */
+    uint32_t pp = ARG(ctx, 1);
+    if (pp) WR32(MEM(pp), make_object(IFACE_BUFFER, 0x100));
+    RET(DirectSoundCreateBuffer, 0);
+}
