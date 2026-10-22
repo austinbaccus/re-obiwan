@@ -264,7 +264,10 @@ class FunctionTranslator:
                     work.append(nxt)
             flow = ins.getFlowType()
             if flow.isJump():
-                for t in ins.getFlows():
+                targets = [t for t in ins.getFlows()]
+                if flow.isComputed():
+                    targets += self.read_jump_table(ins)
+                for t in targets:
                     to = t.getOffset()
                     if to == self.entry or fm.getFunctionAt(t) is not None:
                         continue  # a jump to a function entry stays a tail call
@@ -273,6 +276,35 @@ class FunctionTranslator:
                         work.append(nxt)
         order.sort(key=lambda i: i.getAddress().getOffset())
         return order
+
+    def read_jump_table(self, ins):
+        """Targets of `jmp dword ptr [reg*4 + table]` read from the table itself.
+
+        Ghidra's switch recovery sometimes resolves only part of a table (or
+        none); the entries that point back into this function's neighbourhood
+        are taken as cases. Stops at the first entry that does not.
+        """
+        memory = self.program.getMemory()
+        base = None
+        for i in range(ins.getNumOperands()):
+            for obj in ins.getOpObjects(i):
+                if hasattr(obj, 'getUnsignedValue') and obj.getUnsignedValue() > 0x10000:
+                    base = obj.getUnsignedValue()
+        if base is None or '*0x4' not in str(ins):
+            return []
+        lo, hi = self.entry - 0x100, self.entry + 0x8000
+        out = []
+        for n in range(256):
+            try:
+                v = memory.getInt(self.space_.getAddress(base + 4 * n)) & 0xFFFFFFFF
+            except Exception:  # noqa: BLE001
+                break
+            if not (lo <= v < hi):
+                break
+            out.append(self.space_.getAddress(v))
+        if out:
+            self.features['jumptable_read'] += 1
+        return out
 
     def translate(self):
         listing = self.program.getListing()
