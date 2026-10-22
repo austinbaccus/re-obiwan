@@ -350,13 +350,13 @@ class FunctionTranslator:
             else:
                 self.emit(f'if ({self.rd(c)}) {self.goto_addr(t.getOffset())}')
         elif m == 'BRANCHIND':
+            # Ghidra's jump-table recovery can miss cases, so the switch covers
+            # every instruction of this function; only external targets fall back
             self.features['branchind'] += 1
-            targets = sorted({f.getOffset() for f in ins.getFlows()})
             self.emit(f'{{ uint32_t t_ = {self.rd(ins_[0])}; switch (t_) {{')
-            for t in targets:
-                if t in self.insn_addrs:
-                    self.labels_used.add(f'L_{t:08x}')
-                    self.emit(f'  case 0x{t:08x}u: goto L_{t:08x};')
+            for t in sorted(self.insn_addrs):
+                self.labels_used.add(f'L_{t:08x}')
+                self.emit(f'  case 0x{t:08x}u: goto L_{t:08x};')
             self.emit('  default: rt_jump(ctx, t_); return; } }')
         elif m == 'CALL':
             self.features['call'] += 1
@@ -545,8 +545,12 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         prev3 = memory.getByte(addr.subtract(3)) & 0xFF
         return prev in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB, 0x00) or prev3 == 0xC2
 
-    # code pointers in data (vtables without RTTI, callback tables) and in
-    # instruction immediates (function pointers taken by value)
+    # Code pointers in data that land in the XDK library sections: those
+    # libraries' vtables have no RTTI, so the RTTI pass never saw them. Game
+    # code (.text) is left alone: its data-only entry points come from the
+    # RTTI and initializer passes, and a stray constant must not split a
+    # function or disturb a jump table there.
+    lib_blocks = [b for b in code_blocks if b.getName() != '.text']
     pointer_targets = set()
     for b in memory.getBlocks():
         if b.getName() not in ('.rdata', '.data'):
@@ -554,25 +558,29 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         a_, end = b.getStart(), b.getEnd()
         while a_.add(3).compareTo(end) <= 0:
             v = memory.getInt(a_) & 0xFFFFFFFF
-            if 0x11000 <= v < 0x3bc220:
+            if 0x368400 <= v < 0x3bc220:
                 t = space.getAddress(v)
-                if looks_like_entry(t):
+                if any(lb.contains(t) for lb in lib_blocks) and looks_like_entry(t):
                     pointer_targets.add(t)
             a_ = a_.add(4)
-    for ins in listing.getInstructions(True):
-        for i in range(ins.getNumOperands()):
-            for obj in ins.getOpObjects(i):
-                if hasattr(obj, 'getUnsignedValue'):
-                    v = obj.getUnsignedValue()
-                    if 0x11000 <= v < 0x3bc220 and looks_like_entry(space.getAddress(v)):
-                        pointer_targets.add(space.getAddress(v))
-    for addr in pointer_targets:
+    def make_function(addr):
+        """Create a function at addr if the bytes there are an instruction or
+        undefined; never disturb defined data (jump tables) or other functions."""
+        if fm.getFunctionAt(addr) is not None or fm.getFunctionContaining(addr) is not None:
+            return False
         if listing.getInstructionAt(addr) is None:
-            listing.clearCodeUnits(addr, addr.add(15), False)
+            cu = listing.getCodeUnitAt(addr)
+            if cu is None or listing.getDefinedDataContaining(addr) is not None or listing.getInstructionContaining(addr) is not None:
+                return False
             DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
-        if CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY):
+            if listing.getInstructionAt(addr) is None:
+                return False
+        return bool(CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY))
+
+    for addr in pointer_targets:
+        if make_function(addr):
             created += 1
-    print(f'created {created} functions for code pointers in data and immediates', file=sys.stderr)
+    print(f'created {created} functions for library code pointers in data', file=sys.stderr)
 
     for _round in range(8):
         missing = set()
@@ -583,12 +591,13 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
                         missing.add(flow)
         if not missing:
             break
+        made = 0
         for addr in missing:
-            if listing.getInstructionAt(addr) is None:
-                listing.clearCodeUnits(addr, addr.add(15), False)
-                DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
-            if CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY):
-                created += 1
+            if make_function(addr):
+                made += 1
+        created += made
+        if not made:
+            break
     if created:
         print(f'created {created} functions for direct-call targets', file=sys.stderr)
 
