@@ -100,7 +100,10 @@ Run `/mcp` inside Claude to confirm the `ghidra` server is connected. Your login
 is kept in a Docker volume, so you only log in once.
 
 Claude Code running on Windows (outside Docker) can use the same server: the
-port is published on `127.0.0.1:8000` and `.mcp.json` falls back to that address.
+port is published on `127.0.0.1:8000`, and the `re` container shares the
+server's network, so `.mcp.json` points at `http://localhost:8000/mcp` in both
+places. (The server only accepts `localhost` as the host name; that is MCP's
+protection against DNS rebinding, so don't point clients at `ghidra-mcp:8000`.)
 
 ### 5. Ghidra GUI on Windows (optional, for browsing by hand)
 
@@ -150,6 +153,9 @@ and its GDB stub lets us step through the original code alongside Ghidra.
   (`\\wsl$\Ubuntu\home\<you>\re-obiwan`) and run compose from there.
 - **`project is locked`**: the project is open in the GUI or in another
   container. Close it there first.
+- **`/mcp` in Claude says `HTTP 421`**: the client is reaching the server by a
+  host name other than `localhost`. Use `http://localhost:8000/mcp` (what the
+  repo's `.mcp.json` has) and make sure the `ghidra-mcp` service is running.
 
 ## What comes next
 
