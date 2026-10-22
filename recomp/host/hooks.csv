@@ -133,3 +133,9 @@
 # D3D helpers the game calls directly besides the API (found by scanning the generated code)
 0x0036de40,D3DTexture_GetLevelDesc
 0x0036e090,D3D_AllocContiguousMemory
+# vertex shaders: handles only until they are translated (milestone #10)
+0x0036cea0,D3DDevice_CreateVertexShader
+0x0036d280,D3DDevice_DeleteVertexShader
+0x0036d070,D3DDevice_LoadVertexShader
+0x0036d0d0,D3DDevice_SelectVertexShader
+0x0036d140,D3DDevice_SetShaderConstantMode

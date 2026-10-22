@@ -230,6 +230,19 @@ HOOK(D3DDevice_CreatePixelShader) {
     RET(D3DDevice_CreatePixelShader, 0);
 }
 HOOK(D3DDevice_DeletePixelShader) { RET(D3DDevice_DeletePixelShader, 0); }
+/* Vertex shaders are not translated yet: CreateVertexShader(pDeclaration,
+   pFunction, pHandle, Usage) hands out an odd handle (bit 0 set marks a
+   shader rather than an FVF code), and the renderer falls back to fixed
+   function for draws that use one. */
+HOOK(D3DDevice_CreateVertexShader) {
+    uint32_t ph = ARG(ctx, 2);
+    if (ph) WR32(MEM(ph), (g_handles++ << 4) | 1);
+    RET(D3DDevice_CreateVertexShader, 0);
+}
+HOOK(D3DDevice_DeleteVertexShader) { RET(D3DDevice_DeleteVertexShader, 0); }
+HOOK(D3DDevice_LoadVertexShader) { RET(D3DDevice_LoadVertexShader, 0); }
+HOOK(D3DDevice_SelectVertexShader) { RET(D3DDevice_SelectVertexShader, 0); }
+HOOK(D3DDevice_SetShaderConstantMode) { RET(D3DDevice_SetShaderConstantMode, 0); }
 HOOK(D3DDevice_CreateStateBlock) { if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), g_handles++); RET(D3DDevice_CreateStateBlock, 0); }
 HOOK(D3DDevice_CaptureStateBlock) { RET(D3DDevice_CaptureStateBlock, 0); }
 HOOK(D3DDevice_ApplyStateBlock) { RET(D3DDevice_ApplyStateBlock, 0); }

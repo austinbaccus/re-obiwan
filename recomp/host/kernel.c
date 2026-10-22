@@ -1414,6 +1414,28 @@ static void heap_check(Ctx *ctx, const char *what) {
             return;
         }
     }
+    /* every free list: entries are block+8 of blocks outside the list heads,
+       links agree both ways, and block sizes match the list (list 0 holds
+       blocks of 0x80 units or more) */
+    for (uint32_t i = 0; i < 128 && !reported; i++) {
+        uint32_t head = heap + 0x180 + 8 * i, e = RD32(MEM(head)), prev = head;
+        for (int n = 0; e != head && n < 100000; n++) {
+            const char *bad = NULL;
+            uint32_t blk = e - 8, size = 0;
+            if (!kmem_block_containing(e)) bad = "points outside guest memory";
+            else if (e >= heap + 0x180 && e < heap + 0x580) bad = "points at a list head";
+            else if (RD32(MEM(e + 4)) != prev) bad = "has a Blink that does not point back";
+            else if (size = RD16(MEM(blk)), i ? size != i : size < 0x80) bad = "holds a block of the wrong size";
+            if (bad) {
+                fprintf(stderr, "heapcheck: list %u entry %08x (after %08x) %s (size %x), noticed before %s from %08x (esp %08x)\n", i, e,
+                        prev, bad, size, what, RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+                reported = 1;
+                break;
+            }
+            prev = e;
+            e = RD32(MEM(e));
+        }
+    }
 }
 
 void kernel_call(Ctx *ctx, uint32_t ordinal) {

@@ -80,6 +80,18 @@ def st(size):
     return f'int{size * 8}_t'
 
 
+def fall_through(ins):
+    """Where execution continues after ins. Ghidra drops the fall-through of
+    a call to a function it believes never returns, and has been wrong
+    (XGraphics' 0x39ebd5 returns normally): a call always continues at the
+    next instruction here. A truly non-returning callee never comes back, so
+    the extra code is harmless."""
+    ft = ins.getFallThrough()
+    if ft is None and ins.getFlowType().isCall():
+        ft = ins.getAddress().add(ins.getLength())
+    return ft
+
+
 def force_disassemble(program, addr):
     """Flow reaches these bytes, so they are code: a mis-decoded instruction
     may start inside the real one, or Ghidra typed them as data (a lone
@@ -280,7 +292,7 @@ class FunctionTranslator:
                 continue
             seen.add(a)
             order.append(ins)
-            ft = ins.getFallThrough()
+            ft = fall_through(ins)
             if ft is not None:
                 nxt = ins_at(ft)
                 if nxt is not None:
@@ -410,7 +422,7 @@ class FunctionTranslator:
                 sw = self.program.getRegister('FPUStatusWord').getOffset()
                 self.emit(f'WR16((ctx->r + 0x{sw:x}), (uint16_t)(RD16((ctx->r + 0x{sw:x})) & 0xfbff)); /* C2 = 0 */')
             # explicit fall-through when the next emitted instruction is not the next in memory
-            ft = ins.getFallThrough()
+            ft = fall_through(ins)
             if ft is not None:
                 nxt = self.insns[idx + 1].getAddress().getOffset() if idx + 1 < len(self.insns) else None
                 if ft.getOffset() != nxt:
