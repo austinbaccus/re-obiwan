@@ -38,6 +38,7 @@ HOOK(XLaunchNewImageA) {
         fwrite(data ? MEM(data) : zero, 1, 3072, f);
         fclose(f);
     }
+    SetEnvironmentVariableA("RECOMP_LAUNCH", NULL); /* a replayed run relaunches with the new data, not the replayed file */
     STARTUPINFOA si = {sizeof si};
     PROCESS_INFORMATION pi;
     char cmd[2048];
