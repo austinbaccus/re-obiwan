@@ -12,5 +12,5 @@ $repo = Split-Path $PSScriptRoot -Parent
 $buildDir = Join-Path $repo "build\$Arch"
 
 $env:PATH = "$installer;$cmakeDir\CMake\bin;$cmakeDir\Ninja;$env:PATH"
-cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $Arch >nul && cmake -S `"$PSScriptRoot`" -B `"$buildDir`" -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=$Config && cmake --build `"$buildDir`""
+cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $(if ($Arch -eq "x86") { "amd64_x86" } else { "amd64" }) >nul && cmake -S `"$PSScriptRoot`" -B `"$buildDir`" -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=$Config && cmake --build `"$buildDir`""
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }

@@ -89,6 +89,7 @@ class FunctionTranslator:
         self.features = collections.Counter()
         self.uniq = {}              # unique offset -> compact offset
         self.uniq_size = 0
+        self.needs_dispatch = False  # function has computed jumps: emit one shared switch
 
     # ---- varnodes -------------------------------------------------------
     def space(self, v):
@@ -398,11 +399,8 @@ class FunctionTranslator:
             # Ghidra's jump-table recovery can miss cases, so the switch covers
             # every instruction of this function; only external targets fall back
             self.features['branchind'] += 1
-            self.emit(f'{{ uint32_t t_ = {self.rd(ins_[0])}; switch (t_) {{')
-            for t in sorted(self.insn_addrs):
-                self.labels_used.add(f'L_{t:08x}')
-                self.emit(f'  case 0x{t:08x}u: goto L_{t:08x};')
-            self.emit('  default: rt_jump(ctx, t_); return; } }')
+            self.needs_dispatch = True
+            self.emit(f'{{ t_dispatch = {self.rd(ins_[0])}; goto L_dispatch; }}')
         elif m == 'CALL':
             self.features['call'] += 1
             self.emit(self.call_expr(ins_[0].getOffset()))
@@ -536,6 +534,13 @@ class FunctionTranslator:
         # so always start by jumping to the entry
         out = [f'void f_{self.entry:08x}(Ctx *ctx) {{ /* {self.func.getName(True)} */',
                f'    uint8_t U[{self.uniq_size}];']
+        if self.needs_dispatch:
+            out.append('    uint32_t t_dispatch;')
+            # every instruction is a possible target of a computed jump whose
+            # table was only partly recovered; one switch per function keeps
+            # the generated code a manageable size
+            for t in sorted(self.insn_addrs):
+                self.labels_used.add(f'L_{t:08x}')
         if self.entry in self.insn_addrs:
             out.append(f'    goto L_{self.entry:08x};')
         else:  # Ghidra has no instruction at the entry (a stray 1-byte function)
@@ -549,6 +554,13 @@ class FunctionTranslator:
                     out.append('    /* ' + line[line.index('/*') + 3:])
                     continue
             out.append(line)
+        if self.needs_dispatch:
+            out.append('L_dispatch:')
+            out.append('    switch (t_dispatch) {')
+            for t in sorted(self.insn_addrs):
+                out.append(f'    case 0x{t:08x}u: goto L_{t:08x};')
+            out.append('    default: rt_jump(ctx, t_dispatch); return;')
+            out.append('    }')
         out.append('}')
         return '\n'.join(out)
 
