@@ -525,6 +525,73 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     program = project.openProgram('/', PROGRAM, False)
     tx = program.startTransaction('translate (scratch, never saved)')
     fm, memory = program.getFunctionManager(), program.getMemory()
+
+    # Ghidra's CreateFunctionCmd does not create callees, so code reached only
+    # from functions added later (initializers, vtable slots) can be called
+    # directly without being a function. Close over direct-call targets on
+    # this scratch copy before translating.
+    from ghidra.app.cmd.function import CreateFunctionCmd
+    listing = program.getListing()
+    code_blocks = [b for b in memory.getBlocks() if b.isExecute() and b.getName() not in ('.rdata', '.data', 'DOLBY')]
+    created = 0
+    space = program.getAddressFactory().getDefaultAddressSpace()
+
+    def looks_like_entry(addr):
+        """Code address not inside a function whose preceding bytes end a function
+        (ret, int3, nop padding, jmp): safe to make a function without splitting one."""
+        if fm.getFunctionContaining(addr) is not None or not any(b.contains(addr) for b in code_blocks):
+            return False
+        prev = memory.getByte(addr.subtract(1)) & 0xFF
+        prev3 = memory.getByte(addr.subtract(3)) & 0xFF
+        return prev in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB, 0x00) or prev3 == 0xC2
+
+    # code pointers in data (vtables without RTTI, callback tables) and in
+    # instruction immediates (function pointers taken by value)
+    pointer_targets = set()
+    for b in memory.getBlocks():
+        if b.getName() not in ('.rdata', '.data'):
+            continue
+        a_, end = b.getStart(), b.getEnd()
+        while a_.add(3).compareTo(end) <= 0:
+            v = memory.getInt(a_) & 0xFFFFFFFF
+            if 0x11000 <= v < 0x3bc220:
+                t = space.getAddress(v)
+                if looks_like_entry(t):
+                    pointer_targets.add(t)
+            a_ = a_.add(4)
+    for ins in listing.getInstructions(True):
+        for i in range(ins.getNumOperands()):
+            for obj in ins.getOpObjects(i):
+                if hasattr(obj, 'getUnsignedValue'):
+                    v = obj.getUnsignedValue()
+                    if 0x11000 <= v < 0x3bc220 and looks_like_entry(space.getAddress(v)):
+                        pointer_targets.add(space.getAddress(v))
+    for addr in pointer_targets:
+        if listing.getInstructionAt(addr) is None:
+            listing.clearCodeUnits(addr, addr.add(15), False)
+            DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
+        if CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY):
+            created += 1
+    print(f'created {created} functions for code pointers in data and immediates', file=sys.stderr)
+
+    for _round in range(8):
+        missing = set()
+        for ins in listing.getInstructions(True):
+            if ins.getFlowType().isCall():
+                for flow in ins.getFlows():
+                    if fm.getFunctionAt(flow) is None and any(b.contains(flow) for b in code_blocks):
+                        missing.add(flow)
+        if not missing:
+            break
+        for addr in missing:
+            if listing.getInstructionAt(addr) is None:
+                listing.clearCodeUnits(addr, addr.add(15), False)
+                DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
+            if CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY):
+                created += 1
+    if created:
+        print(f'created {created} functions for direct-call targets', file=sys.stderr)
+
     funcs = [f for f in fm.getFunctions(True)
              if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
 
