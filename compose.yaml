@@ -1,0 +1,51 @@
+# Usage (from the repo folder, e.g. X:\source\repos\re-obiwan):
+#   docker compose build
+#   docker compose up -d ghidra-mcp     # headless Ghidra MCP server
+#   docker compose run --rm re          # shell with Claude Code, Ghidra, extract-xiso
+#
+# The whole repo folder (including obiwan.iso) is bind-mounted at /workspace.
+# Nothing from the game is baked into the image.
+
+name: re-obiwan
+
+x-common: &common
+  image: re-obiwan:dev
+  volumes:
+    - .:/workspace
+  environment:
+    OBIWAN_ISO: /workspace/obiwan.iso
+    # Where the extracted game executable is, relative to the repo folder.
+    # Leave empty to auto-detect the first default.xbe under /workspace.
+    OBIWAN_XBE: ${OBIWAN_XBE:-}
+
+services:
+  ghidra-mcp:
+    <<: *common
+    build:
+      context: ./docker
+    command: ["start-ghidra-mcp"]
+    ports:
+      # Reachable from Windows too (e.g. Claude Code on the host).
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  re:
+    <<: *common
+    depends_on:
+      - ghidra-mcp
+    volumes:
+      - .:/workspace
+      # Keeps Claude Code login and settings between container runs.
+      - claude-config:/home/re/.claude
+    environment:
+      OBIWAN_ISO: /workspace/obiwan.iso
+      OBIWAN_XBE: ${OBIWAN_XBE:-}
+      GHIDRA_MCP_URL: http://ghidra-mcp:8000/mcp
+      # Optional: set on the host to use an API key instead of `claude` login.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    stdin_open: true
+    tty: true
+    command: ["bash"]
+
+volumes:
+  claude-config:

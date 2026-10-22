@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Run pyghidra-mcp over streamable HTTP against the shared Ghidra project.
+# The game executable is imported and analyzed automatically when found.
+#
+# Lookup order for the XBE:
+#   1. $OBIWAN_XBE, if set
+#   2. $EXTRACT_DIR/default.xbe
+#   3. the first default.xbe found up to three levels below /workspace
+set -euo pipefail
+
+mkdir -p "${GHIDRA_PROJECT_DIR}"
+
+find_xbe() {
+    if [[ -n "${OBIWAN_XBE:-}" ]]; then
+        echo "${OBIWAN_XBE}"
+        return
+    fi
+    if [[ -f "${EXTRACT_DIR}/default.xbe" ]]; then
+        echo "${EXTRACT_DIR}/default.xbe"
+        return
+    fi
+    find "${WORKSPACE}" -maxdepth 3 -iname default.xbe -not -path '*/.git/*' 2>/dev/null | head -n 1
+}
+
+args=(
+    --transport streamable-http
+    --host 0.0.0.0
+    --port "${GHIDRA_MCP_PORT:-8000}"
+    --project-path "${GHIDRA_PROJECT_DIR}"
+    --project-name "${GHIDRA_PROJECT_NAME}"
+)
+
+xbe="$(find_xbe)"
+if [[ -n "${xbe}" && -f "${xbe}" ]]; then
+    echo "Using ${xbe}"
+    args+=("${xbe}")
+else
+    echo "No default.xbe found under ${WORKSPACE}. Set OBIWAN_XBE in compose.yaml or run 'extract-iso', then restart this service." >&2
+fi
+
+exec pyghidra-mcp "${args[@]}" "$@"
