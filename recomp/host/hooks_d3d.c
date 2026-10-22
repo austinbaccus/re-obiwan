@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "funcs.h"
 #include "kernel.h"
@@ -298,7 +299,20 @@ HOOK(D3D_AllocContiguousMemory) {
 }
 
 /* ---- XGraphics shader assembler ---------------------------------------- */
-uint32_t make_xgbuffer(uint32_t size); /* hooks_dsound.c */
+/* This XGraphics has no COM buffer: an XGBUFFER is {refcount, pData, size}
+   from the game's heap, read through C accessors (XGBuffer_GetBufferPointer
+   0x397fb4 returns +4) and freed by XGBuffer_Release (0x397f8b). So the
+   game's own XGBufferCreate(size, ppBuffer) (0x397fc8) makes it. */
+static uint32_t make_xgbuffer(Ctx *ctx, uint32_t size) {
+    static uint32_t pp; /* the out slot: startup only, one thread */
+    if (!pp) pp = kmem_alloc(4, 4);
+    uint32_t args[2] = {size, pp};
+    WR32(MEM(pp), 0);
+    if (rt_host_call(ctx, 0x00397fc8, 2, args) != 0) return 0;
+    uint32_t buf = RD32(MEM(pp));
+    memset(MEM(RD32(MEM(buf + 4))), 0, size);
+    return buf;
+}
 
 /* XGAssembleShader(pSrcName, pSrcData, SrcDataLen, Flags, ppConstants,
    ppCompiledShader, ppErrorLog, ppShaderType, ...): the game assembles its
@@ -309,7 +323,7 @@ HOOK(XGAssembleShader) {
     uint32_t pp_const = ARG(ctx, 4), pp_shader = ARG(ctx, 5), pp_err = ARG(ctx, 6), pp_type = ARG(ctx, 7);
     trace("XGAssembleShader %s (%u bytes of source, flags %08x)", name, ARG(ctx, 2), ARG(ctx, 3));
     if (pp_const) WR32(MEM(pp_const), 0);
-    if (pp_shader) WR32(MEM(pp_shader), make_xgbuffer(0xA4));
+    if (pp_shader) WR32(MEM(pp_shader), make_xgbuffer(ctx, 0xA4));
     if (pp_err) WR32(MEM(pp_err), 0);
     if (pp_type) WR32(MEM(pp_type), 0);
     RET(XGAssembleShader, 0);

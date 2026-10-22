@@ -85,9 +85,11 @@ def fall_through(ins):
     a call to a function it believes never returns, and has been wrong
     (XGraphics' 0x39ebd5 returns normally): a call always continues at the
     next instruction here. A truly non-returning callee never comes back, so
-    the extra code is harmless."""
+    the extra code is harmless. Only CALL: Ghidra gives tail-call JMPs (the
+    EH stubs' `jmp ___CxxFrameHandler`, thunks) the same call flow type, and
+    what follows those is padding or the next function."""
     ft = ins.getFallThrough()
-    if ft is None and ins.getFlowType().isCall():
+    if ft is None and ins.getFlowType().isCall() and ins.getMnemonicString().upper() == 'CALL':
         ft = ins.getAddress().add(ins.getLength())
     return ft
 
