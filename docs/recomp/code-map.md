@@ -1,7 +1,8 @@
 # Code map
 
 Where the code in `default.xbe` comes from, and how execution gets from the
-entry point to the game's frame loop. Function-level detail (12,860 functions
+entry point to the game's frame loop. Function-level detail (15,501 functions after the RTTI pass in classes.md; the
+numbers below are from the first pass of 12,860
 with address range, section, class and any library name) is in
 [functions.csv](functions.csv).
 

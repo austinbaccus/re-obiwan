@@ -1,0 +1,886 @@
+type_descriptor,name,mangled,kind,inheritance,bases
+0x00425b20,?$_Iosb@H@std,.?AV?$_Iosb@H@std@@,class,,
+0x0043dda4,?$ATrackData@VAnimationEvent@@,.?AV?$ATrackData@VAnimationEvent@@@@,class,,
+0x0043ddfc,?$ATrackData@VCCompQuaternion@@,.?AV?$ATrackData@VCCompQuaternion@@@@,class,,
+0x0043de58,?$ATrackData@VCCompVector@@,.?AV?$ATrackData@VCCompVector@@@@,class,,
+0x0043de2c,?$ATrackData@VCQuaternion@@,.?AV?$ATrackData@VCQuaternion@@@@,class,single,ATrack@0 LSaveRestore@0
+0x0043ddd4,?$ATrackData@VCVector@@,.?AV?$ATrackData@VCVector@@@@,class,single,ATrack@0 LSaveRestore@0
+0x0043da80,?$ATrackKeyframeData@VAnimationEvent@@,.?AV?$ATrackKeyframeData@VAnimationEvent@@@@,class,single,?$ATrackData@VAnimationEvent@@@0 ATrack@0 LSaveRestore@0
+0x0043e0d0,?$ATrackKeyframeData@VCCompQuaternion@@,.?AV?$ATrackKeyframeData@VCCompQuaternion@@@@,class,single,?$ATrackData@VCCompQuaternion@@@0 ATrack@0 LSaveRestore@0
+0x0043e13c,?$ATrackKeyframeData@VCCompVector@@,.?AV?$ATrackKeyframeData@VCCompVector@@@@,class,single,?$ATrackData@VCCompVector@@@0 ATrack@0 LSaveRestore@0
+0x0043e108,?$ATrackKeyframeData@VCQuaternion@@,.?AV?$ATrackKeyframeData@VCQuaternion@@@@,class,single,?$ATrackData@VCQuaternion@@@0 ATrack@0 LSaveRestore@0
+0x0043e0a0,?$ATrackKeyframeData@VCVector@@,.?AV?$ATrackKeyframeData@VCVector@@@@,class,single,?$ATrackData@VCVector@@@0 ATrack@0 LSaveRestore@0
+0x00425b88,?$basic_ios@DU?$char_traits@D@std@@@std,.?AV?$basic_ios@DU?$char_traits@D@std@@@std@@,class,single,std::ios_base@0 ?$_Iosb@H@std@4
+0x00425c8c,?$basic_iostream@DU?$char_traits@D@std@@@std,.?AV?$basic_iostream@DU?$char_traits@D@std@@@std@@,class,virtual,?$basic_istream@DU?$char_traits@D@std@@@std@0 ?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4 ?$basic_ostream@DU?$char_traits@D@std@@@std@8 ?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4
+0x00425bfc,?$basic_istream@DU?$char_traits@D@std@@@std,.?AV?$basic_istream@DU?$char_traits@D@std@@@std@@,class,single,?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4
+0x00425bc0,?$basic_ostream@DU?$char_traits@D@std@@@std,.?AV?$basic_ostream@DU?$char_traits@D@std@@@std@@,class,single,?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4
+0x00425f7c,?$basic_streambuf@DU?$char_traits@D@std@@@std,.?AV?$basic_streambuf@DU?$char_traits@D@std@@@std@@,class,single,
+0x0043ebb0,?$CBezSpline@VCVector@@,.?AV?$CBezSpline@VCVector@@@@,class,single,?$CSpline@VCVector@@@0
+0x0043a6c0,?$CDataBaseValue@_N,.?AV?$CDataBaseValue@_N@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a69c,?$CDataBaseValue@H,.?AV?$CDataBaseValue@H@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a678,?$CDataBaseValue@M,.?AV?$CDataBaseValue@M@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a814,?$CDataBaseValue@PAVCameraManPlayer@@,.?AV?$CDataBaseValue@PAVCameraManPlayer@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a748,?$CDataBaseValue@PAVCReferencePos@@,.?AV?$CDataBaseValue@PAVCReferencePos@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043aa44,?$CDataBaseValue@PAVCScript@@,.?AV?$CDataBaseValue@PAVCScript@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a780,?$CDataBaseValue@PAVCTanisRegion@@,.?AV?$CDataBaseValue@PAVCTanisRegion@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043aa10,?$CDataBaseValue@PAVCTanisSound@@,.?AV?$CDataBaseValue@PAVCTanisSound@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a8cc,?$CDataBaseValue@PBD,.?AV?$CDataBaseValue@PBD@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a714,?$CDataBaseValue@PBVCPathNode@@,.?AV?$CDataBaseValue@PBVCPathNode@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a6e4,?$CDataBaseValue@VCEntityRef@@,.?AV?$CDataBaseValue@VCEntityRef@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a7e0,?$CDataBaseValue@VCScriptRef@@,.?AV?$CDataBaseValue@VCScriptRef@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x0043a7b4,?$CDataBaseValue@VLString@@,.?AV?$CDataBaseValue@VLString@@@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x00429260,?$CharData@$0BA@@LStringAllocatorBase,.?AU?$CharData@$0BA@@LStringAllocatorBase@@,struct,,
+0x004292d4,?$CharData@$0CA@@LStringAllocatorBase,.?AU?$CharData@$0CA@@LStringAllocatorBase@@,struct,,
+0x00429348,?$CharData@$0EA@@LStringAllocatorBase,.?AU?$CharData@$0EA@@LStringAllocatorBase@@,struct,,
+0x0043b330,?$CMessage_Typed@H,.?AV?$CMessage_Typed@H@@,class,single,CMessage@0
+0x00428504,?$CMessage_Typed@UMsgControlEvent@@,.?AV?$CMessage_Typed@UMsgControlEvent@@@@,class,single,CMessage@0
+0x0043b0f4,?$CMessage_Typed@UMsgCreateObjData@@,.?AV?$CMessage_Typed@UMsgCreateObjData@@@@,class,single,CMessage@0
+0x00428404,?$CMessage_Typed@UMsgData@@,.?AV?$CMessage_Typed@UMsgData@@@@,class,single,CMessage@0
+0x0043f92c,?$CMessage_Typed@UMsgFloat1@@,.?AV?$CMessage_Typed@UMsgFloat1@@@@,class,single,CMessage@0
+0x00427f00,?$CMessage_Typed@UMsgInt1@@,.?AV?$CMessage_Typed@UMsgInt1@@@@,class,single,CMessage@0
+0x0043a9cc,?$CMessage_Typed@UMsgInt1Float1@@,.?AV?$CMessage_Typed@UMsgInt1Float1@@@@,class,single,CMessage@0
+0x00428430,?$CMessage_Typed@UMsgInt2@@,.?AV?$CMessage_Typed@UMsgInt2@@@@,class,single,CMessage@0
+0x0043d2e4,?$CMessage_Typed@UMsgQuat1@@,.?AV?$CMessage_Typed@UMsgQuat1@@@@,class,single,CMessage@0
+0x00428624,?$CMessage_Typed@UMsgString1@@,.?AV?$CMessage_Typed@UMsgString1@@@@,class,single,CMessage@0
+0x00428654,?$CMessage_Typed@UMsgString1Int2@@,.?AV?$CMessage_Typed@UMsgString1Int2@@@@,class,single,CMessage@0
+0x004285f0,?$CMessage_Typed@UMsgString1Vector1@@,.?AV?$CMessage_Typed@UMsgString1Vector1@@@@,class,single,CMessage@0
+0x00428538,?$CMessage_Typed@VControlEvent@@,.?AV?$CMessage_Typed@VControlEvent@@@@,class,single,CMessage@0
+0x0043eb8c,?$CSpline@VCVector@@,.?AV?$CSpline@VCVector@@@@,class,single,
+0x00428580,?$CTanisMsg@UMsgControlEvent@@,.?AV?$CTanisMsg@UMsgControlEvent@@@@,class,single,?$CMessage_Typed@UMsgControlEvent@@@0 CMessage@0
+0x0043b128,?$CTanisMsg@UMsgCreateObjData@@,.?AV?$CTanisMsg@UMsgCreateObjData@@@@,class,single,?$CMessage_Typed@UMsgCreateObjData@@@0 CMessage@0
+0x00428490,?$CTanisMsg@UMsgData@@,.?AV?$CTanisMsg@UMsgData@@@@,class,single,?$CMessage_Typed@UMsgData@@@0 CMessage@0
+0x0043e3b4,?$CTanisMsg@UMsgFloat1@@,.?AV?$CTanisMsg@UMsgFloat1@@@@,class,single,?$CMessage_Typed@UMsgFloat1@@@0 CMessage@0
+0x0043e410,?$CTanisMsg@UMsgFloat2@@,.?AV?$CTanisMsg@UMsgFloat2@@@@,class,,
+0x00427f6c,?$CTanisMsg@UMsgInt1@@,.?AV?$CTanisMsg@UMsgInt1@@@@,class,single,?$CMessage_Typed@UMsgInt1@@@0 CMessage@0
+0x0043aadc,?$CTanisMsg@UMsgInt1Float1@@,.?AV?$CTanisMsg@UMsgInt1Float1@@@@,class,single,?$CMessage_Typed@UMsgInt1Float1@@@0 CMessage@0
+0x004284b8,?$CTanisMsg@UMsgInt2@@,.?AV?$CTanisMsg@UMsgInt2@@@@,class,single,?$CMessage_Typed@UMsgInt2@@@0 CMessage@0
+0x0043e320,?$CTanisMsg@UMsgInt3@@,.?AV?$CTanisMsg@UMsgInt3@@@@,class,,
+0x0043d3d8,?$CTanisMsg@UMsgQuat1@@,.?AV?$CTanisMsg@UMsgQuat1@@@@,class,single,?$CMessage_Typed@UMsgQuat1@@@0 CMessage@0
+0x00428688,?$CTanisMsg@UMsgString1@@,.?AV?$CTanisMsg@UMsgString1@@@@,class,single,?$CMessage_Typed@UMsgString1@@@0 CMessage@0
+0x004286b0,?$CTanisMsg@UMsgString1Int2@@,.?AV?$CTanisMsg@UMsgString1Int2@@@@,class,single,?$CMessage_Typed@UMsgString1Int2@@@0 CMessage@0
+0x004286dc,?$CTanisMsg@UMsgString1Vector1@@,.?AV?$CTanisMsg@UMsgString1Vector1@@@@,class,single,?$CMessage_Typed@UMsgString1Vector1@@@0 CMessage@0
+0x0043e548,?$CTanisMsg@UMsgVector1@@,.?AV?$CTanisMsg@UMsgVector1@@@@,class,,
+0x0043e5a4,?$CTanisMsg@UMsgVector2@@,.?AV?$CTanisMsg@UMsgVector2@@@@,class,,
+0x0043ed50,?$LArray2D@_N,.?AV?$LArray2D@_N@@,class,single,
+0x0043ed6c,?$LArray2D@V?$LList@PAVCPathNode@@@@,.?AV?$LArray2D@V?$LList@PAVCPathNode@@@@@@,class,single,
+0x00426ed8,?$LArray@G,.?AV?$LArray@G@@,class,single,
+0x00426dcc,?$LArray@H,.?AV?$LArray@H@@,class,single,
+0x00426d40,?$LArray@I,.?AV?$LArray@I@@,class,single,
+0x00426f74,?$LArray@M,.?AV?$LArray@M@@,class,single,
+0x0042a288,?$LArray@PAUExtentValue@CPhysNode@@,.?AV?$LArray@PAUExtentValue@CPhysNode@@@@,class,single,
+0x0043b000,?$LArray@PAUFragTableData@@,.?AV?$LArray@PAUFragTableData@@@@,class,single,
+0x0043d2c0,?$LArray@PAV_CNode@@,.?AV?$LArray@PAV_CNode@@@@,class,single,
+0x0043dd7c,?$LArray@PAVCameraMan@@,.?AV?$LArray@PAVCameraMan@@@@,class,single,
+0x0043cd18,?$LArray@PAVCAttachment@@,.?AV?$LArray@PAVCAttachment@@@@,class,single,
+0x0043d298,?$LArray@PAVCBendSpring@@,.?AV?$LArray@PAVCBendSpring@@@@,class,single,
+0x0042a310,?$LArray@PAVCContact@@,.?AV?$LArray@PAVCContact@@@@,class,single,
+0x00427a3c,?$LArray@PAVCLight@@,.?AV?$LArray@PAVCLight@@@@,class,single,
+0x00426d80,?$LArray@PAVCLightNode@@,.?AV?$LArray@PAVCLightNode@@@@,class,single,
+0x0043b308,?$LArray@PAVCMessage@@,.?AV?$LArray@PAVCMessage@@@@,class,single,
+0x00426cec,?$LArray@PAVCOcclusionVolume@@,.?AV?$LArray@PAVCOcclusionVolume@@@@,class,single,
+0x0042a2e4,?$LArray@PAVCPhysicsRegion@@,.?AV?$LArray@PAVCPhysicsRegion@@@@,class,single,
+0x0042a2bc,?$LArray@PAVCPhysNode@@,.?AV?$LArray@PAVCPhysNode@@@@,class,single,
+0x00426cc8,?$LArray@PAVCPortal@@,.?AV?$LArray@PAVCPortal@@@@,class,single,
+0x0042a234,?$LArray@PAVCZoneFace@CZone@@,.?AV?$LArray@PAVCZoneFace@CZone@@@@,class,single,
+0x00428f58,?$LArray@PAVEvent@@,.?AV?$LArray@PAVEvent@@@@,class,single,
+0x00429ed8,?$LArray@PAVLVariant@@,.?AV?$LArray@PAVLVariant@@@@,class,single,
+0x0043a2e8,?$LArray@PAVNodeData@@,.?AV?$LArray@PAVNodeData@@@@,class,single,
+0x00426ca4,?$LArray@PAVRNode@@,.?AV?$LArray@PAVRNode@@@@,class,single,
+0x00426de8,?$LArray@PAVRParticle@@,.?AV?$LArray@PAVRParticle@@@@,class,single,
+0x00425c64,?$LArray@PAVRZoneNode@@,.?AV?$LArray@PAVRZoneNode@@@@,class,single,
+0x0043a310,?$LArray@PAVWeightData@@,.?AV?$LArray@PAVWeightData@@@@,class,single,
+0x0042a9f8,?$LArray@U_D3DVECTOR@@,.?AV?$LArray@U_D3DVECTOR@@@@,class,single,
+0x00426e10,?$LArray@UCUSTOMVERTEX@@,.?AV?$LArray@UCUSTOMVERTEX@@@@,class,single,
+0x00426eac,?$LArray@UCUSTOMVERTEX_DDS@@,.?AV?$LArray@UCUSTOMVERTEX_DDS@@@@,class,single,
+0x0043b02c,?$LArray@UFragTableEntry@@,.?AV?$LArray@UFragTableEntry@@@@,class,single,
+0x0043a364,?$LArray@UTransformStack@@,.?AV?$LArray@UTransformStack@@@@,class,single,
+0x00427ed4,?$LArray@UTriSet@CTextPane@@,.?AV?$LArray@UTriSet@CTextPane@@@@,class,single,
+0x004823a0,?$LArray@V?$LResourceHandle@VAnimation@@@@,.?AV?$LArray@V?$LResourceHandle@VAnimation@@@@@@,class,single,
+0x0043ccd8,?$LArray@V?$LResourceHandle@VCDscGenerator@@@@,.?AV?$LArray@V?$LResourceHandle@VCDscGenerator@@@@@@,class,single,
+0x0043dd50,?$LArray@VATrackListEntry@@,.?AV?$LArray@VATrackListEntry@@@@,class,single,
+0x00426da8,?$LArray@VCDrawVert@@,.?AV?$LArray@VCDrawVert@@@@,class,single,
+0x0043d268,?$LArray@VContactInfo@CEntity@@,.?AV?$LArray@VContactInfo@CEntity@@@@,class,single,
+0x0042a260,?$LArray@VCPhysNodeRef@@,.?AV?$LArray@VCPhysNodeRef@@@@,class,single,
+0x0043ea40,?$LArray@VCPlane@@,.?AV?$LArray@VCPlane@@@@,class,single,
+0x0043a338,?$LArray@VCSkeletonEntry@@,.?AV?$LArray@VCSkeletonEntry@@@@,class,single,
+0x00440290,?$LArray@VCTanisSkeletonEntry@@,.?AV?$LArray@VCTanisSkeletonEntry@@@@,class,single,
+0x00427a60,?$LArray@VCTransform@@,.?AV?$LArray@VCTransform@@@@,class,single,
+0x00426e60,?$LArray@VCVector2@@,.?AV?$LArray@VCVector2@@@@,class,single,
+0x00426d1c,?$LArray@VCVector@@,.?AV?$LArray@VCVector@@@@,class,single,
+0x00426e38,?$LArray@VLPackedColor@@,.?AV?$LArray@VLPackedColor@@@@,class,single,
+0x004283e0,?$LArray@VLString@@,.?AV?$LArray@VLString@@@@,class,single,
+0x00426e84,?$LArray@VRadialPair@@,.?AV?$LArray@VRadialPair@@@@,class,single,
+0x00427164,?$LCArray@VCDrawVert@@,.?AV?$LCArray@VCDrawVert@@@@,class,single,?$LArray@VCDrawVert@@@0
+0x0042a354,?$LCArray@VCVector@@,.?AV?$LCArray@VCVector@@@@,class,single,?$LArray@VCVector@@@0
+0x00426074,?$LCVar@_N,.?AV?$LCVar@_N@@,class,single,LCVarBase@0 ?$ListNode@VLCVarBase@@@4
+0x00428568,?$LCVar@D,.?AV?$LCVar@D@@,class,single,LCVarBase@0 ?$ListNode@VLCVarBase@@@4
+0x00427488,?$LCVar@H,.?AV?$LCVar@H@@,class,single,LCVarBase@0 ?$ListNode@VLCVarBase@@@4
+0x004274a0,?$LCVar@K,.?AV?$LCVar@K@@,class,single,LCVarBase@0 ?$ListNode@VLCVarBase@@@4
+0x00426090,?$LCVar@M,.?AV?$LCVar@M@@,class,single,LCVarBase@0 ?$ListNode@VLCVarBase@@@4
+0x00427f50,?$LDArray@G,.?AV?$LDArray@G@@,class,single,?$LArray@G@0
+0x0042a338,?$LDArray@H,.?AV?$LDArray@H@@,class,single,?$LArray@H@0
+0x00428bec,?$LDArray@I,.?AV?$LDArray@I@@,class,single,?$LArray@I@0
+0x0042a480,?$LDArray@PAUExtentValue@CPhysNode@@,.?AV?$LDArray@PAUExtentValue@CPhysNode@@@@,class,single,?$LArray@PAUExtentValue@CPhysNode@@@0
+0x0043b0c8,?$LDArray@PAUFragTableData@@,.?AV?$LDArray@PAUFragTableData@@@@,class,single,?$LArray@PAUFragTableData@@@0
+0x0043d3b4,?$LDArray@PAV_CNode@@,.?AV?$LDArray@PAV_CNode@@@@,class,single,?$LArray@PAV_CNode@@@0
+0x0043d388,?$LDArray@PAVCBendSpring@@,.?AV?$LDArray@PAVCBendSpring@@@@,class,single,?$LArray@PAVCBendSpring@@@0
+0x0043a588,?$LDArray@PAVCContact@@,.?AV?$LDArray@PAVCContact@@@@,class,single,?$LArray@PAVCContact@@@0
+0x0042713c,?$LDArray@PAVCLightNode@@,.?AV?$LDArray@PAVCLightNode@@@@,class,single,?$LArray@PAVCLightNode@@@0
+0x0043b354,?$LDArray@PAVCMessage@@,.?AV?$LDArray@PAVCMessage@@@@,class,single,?$LArray@PAVCMessage@@@0
+0x0042710c,?$LDArray@PAVCOcclusionVolume@@,.?AV?$LDArray@PAVCOcclusionVolume@@@@,class,single,?$LArray@PAVCOcclusionVolume@@@0
+0x0042a4dc,?$LDArray@PAVCPhysicsRegion@@,.?AV?$LDArray@PAVCPhysicsRegion@@@@,class,single,?$LArray@PAVCPhysicsRegion@@@0
+0x0042a4b4,?$LDArray@PAVCPhysNode@@,.?AV?$LDArray@PAVCPhysNode@@@@,class,single,?$LArray@PAVCPhysNode@@@0
+0x004270e4,?$LDArray@PAVCPortal@@,.?AV?$LDArray@PAVCPortal@@@@,class,single,?$LArray@PAVCPortal@@@0
+0x0042a424,?$LDArray@PAVCZoneFace@CZone@@,.?AV?$LDArray@PAVCZoneFace@CZone@@@@,class,single,?$LArray@PAVCZoneFace@CZone@@@0
+0x00428f7c,?$LDArray@PAVEvent@@,.?AV?$LDArray@PAVEvent@@@@,class,single,?$LArray@PAVEvent@@@0
+0x0043a390,?$LDArray@PAVNodeData@@,.?AV?$LDArray@PAVNodeData@@@@,class,single,?$LArray@PAVNodeData@@@0
+0x004270c0,?$LDArray@PAVRNode@@,.?AV?$LDArray@PAVRNode@@@@,class,single,?$LArray@PAVRNode@@@0
+0x00425fb8,?$LDArray@PAVRZoneNode@@,.?AV?$LDArray@PAVRZoneNode@@@@,class,single,?$LArray@PAVRZoneNode@@@0
+0x0043a3b8,?$LDArray@PAVWeightData@@,.?AV?$LDArray@PAVWeightData@@@@,class,single,?$LArray@PAVWeightData@@@0
+0x00427f2c,?$LDArray@VCVector2@@,.?AV?$LDArray@VCVector2@@@@,class,single,?$LArray@VCVector2@@@0
+0x00426d5c,?$LDArray@VCVector@@,.?AV?$LDArray@VCVector@@@@,class,single,?$LArray@VCVector@@@0
+0x0043e000,?$LDCArray@PAVCameraMan@@,.?AV?$LDCArray@PAVCameraMan@@@@,class,single,?$LArray@PAVCameraMan@@@0
+0x00429f3c,?$LDCArray@PAVLVariant@@,.?AV?$LDCArray@PAVLVariant@@@@,class,single,?$LArray@PAVLVariant@@@0
+0x00427f94,?$LDCArray@UTriSet@CTextPane@@,.?AV?$LDCArray@UTriSet@CTextPane@@@@,class,single,?$LArray@UTriSet@CTextPane@@@0
+0x004823fc,?$LDCArray@V?$LResourceHandle@VAnimation@@@@,.?AV?$LDCArray@V?$LResourceHandle@VAnimation@@@@@@,class,single,?$LArray@V?$LResourceHandle@VAnimation@@@@@0
+0x0043cd60,?$LDCArray@V?$LResourceHandle@VCDscGenerator@@@@,.?AV?$LDCArray@V?$LResourceHandle@VCDscGenerator@@@@@@,class,single,?$LArray@V?$LResourceHandle@VCDscGenerator@@@@@0
+0x0043e028,?$LDCArray@VCDrawVert@@,.?AV?$LDCArray@VCDrawVert@@@@,class,single,?$LArray@VCDrawVert@@@0
+0x0043d9f4,?$LDCArray@VContactInfo@CEntity@@,.?AV?$LDCArray@VContactInfo@CEntity@@@@,class,single,?$LArray@VContactInfo@CEntity@@@0
+0x0042a454,?$LDCArray@VCPhysNodeRef@@,.?AV?$LDCArray@VCPhysNodeRef@@@@,class,single,?$LArray@VCPhysNodeRef@@@0
+0x004284e0,?$LDCArray@VLString@@,.?AV?$LDCArray@VLString@@@@,class,single,?$LArray@VLString@@@0
+0x0043cda0,?$LGArray@PAVCAttachment@@,.?AV?$LGArray@PAVCAttachment@@@@,class,single,?$LArray@PAVCAttachment@@@0
+0x0042a530,?$LGArray@PAVCContact@@,.?AV?$LGArray@PAVCContact@@@@,class,single,?$LArray@PAVCContact@@@0
+0x004271d0,?$LGArray@PAVCLightNode@@,.?AV?$LGArray@PAVCLightNode@@@@,class,single,?$LArray@PAVCLightNode@@@0
+0x0042a558,?$LGArray@PAVCPhysicsRegion@@,.?AV?$LGArray@PAVCPhysicsRegion@@@@,class,single,?$LArray@PAVCPhysicsRegion@@@0
+0x0042a508,?$LGArray@PAVCPhysNode@@,.?AV?$LGArray@PAVCPhysNode@@@@,class,single,?$LArray@PAVCPhysNode@@@0
+0x0043a3e0,?$LGArray@PAVCZoneFace@CZone@@,.?AV?$LGArray@PAVCZoneFace@CZone@@@@,class,single,?$LArray@PAVCZoneFace@CZone@@@0
+0x0042718c,?$LGArray@PAVRParticle@@,.?AV?$LGArray@PAVRParticle@@@@,class,single,?$LArray@PAVRParticle@@@0
+0x0043e170,?$LGArray@VATrackListEntry@@,.?AV?$LGArray@VATrackListEntry@@@@,class,,
+0x0043a410,?$LGArray@VCSkeletonEntry@@,.?AV?$LGArray@VCSkeletonEntry@@@@,class,,
+0x004402c0,?$LGArray@VCTanisSkeletonEntry@@,.?AV?$LGArray@VCTanisSkeletonEntry@@@@,class,,
+0x0043e234,?$LGCArray@VATrackListEntry@@,.?AV?$LGCArray@VATrackListEntry@@@@,class,single,?$LGArray@VATrackListEntry@@@0 ?$LArray@VATrackListEntry@@@0
+0x0043a43c,?$LGCArray@VCSkeletonEntry@@,.?AV?$LGCArray@VCSkeletonEntry@@@@,class,single,?$LGArray@VCSkeletonEntry@@@0 ?$LArray@VCSkeletonEntry@@@0
+0x004402f0,?$LGCArray@VCTanisSkeletonEntry@@,.?AV?$LGCArray@VCTanisSkeletonEntry@@@@,class,single,?$LGArray@VCTanisSkeletonEntry@@@0 ?$LArray@VCTanisSkeletonEntry@@@0
+0x0043ee14,?$LHash2D@PAVCPathNode@@,.?AV?$LHash2D@PAVCPathNode@@@@,class,single,?$LArray2D@V?$LList@PAVCPathNode@@@@@0
+0x0042a3e0,?$LinkedList@VCPhysNode@@,.?AV?$LinkedList@VCPhysNode@@@@,class,,
+0x00425e1c,?$ListNode@VCEntityRef@@,.?AV?$ListNode@VCEntityRef@@@@,class,,
+0x0043d224,?$ListNode@VCForcePower@@,.?AV?$ListNode@VCForcePower@@@@,class,,
+0x00427704,?$ListNode@VCLightNode@@,.?AV?$ListNode@VCLightNode@@@@,class,,
+0x004277d4,?$ListNode@VCMaterial@@,.?AV?$ListNode@VCMaterial@@@@,class,,
+0x0042a584,?$ListNode@VCNodeParticle@@,.?AV?$ListNode@VCNodeParticle@@@@,class,,
+0x00428c08,?$ListNode@VCNodeRef@@,.?AV?$ListNode@VCNodeRef@@@@,class,,
+0x0042a868,?$ListNode@VCNodeSweptSphere@@,.?AV?$ListNode@VCNodeSweptSphere@@@@,class,,
+0x0042a394,?$ListNode@VCPhysicsRegion@@,.?AV?$ListNode@VCPhysicsRegion@@@@,class,,
+0x0042a1d8,?$ListNode@VCPhysNode@@,.?AV?$ListNode@VCPhysNode@@@@,class,,
+0x00427b54,?$ListNode@VCResourceContainer@@,.?AV?$ListNode@VCResourceContainer@@@@,class,,
+0x0043fc20,?$ListNode@VCSpecialEffect@@,.?AV?$ListNode@VCSpecialEffect@@@@,class,,
+0x00428288,?$ListNode@VCSpecialEffectRef@@,.?AV?$ListNode@VCSpecialEffectRef@@@@,class,,
+0x0043b070,?$ListNode@VCSpring@@,.?AV?$ListNode@VCSpring@@@@,class,,
+0x0043f1a4,?$ListNode@VCTanisGenNode@@,.?AV?$ListNode@VCTanisGenNode@@@@,class,,
+0x0043e7fc,?$ListNode@VCTanisSound@@,.?AV?$ListNode@VCTanisSound@@@@,class,,
+0x0042aa58,?$ListNode@VCTexture@@,.?AV?$ListNode@VCTexture@@@@,class,,
+0x00426034,?$ListNode@VLCVarBase@@,.?AV?$ListNode@VLCVarBase@@@@,class,,
+0x00425ef4,?$ListNode@VLPeriodic@@,.?AV?$ListNode@VLPeriodic@@@@,class,,
+0x00426f90,?$ListNode@VLPoolBase@@,.?AV?$ListNode@VLPoolBase@@@@,class,,
+0x00427764,?$ListNode@VLResource@@,.?AV?$ListNode@VLResource@@@@,class,,
+0x0043eb18,?$ListNode@VRGlowMark@@,.?AV?$ListNode@VRGlowMark@@@@,class,,
+0x00426bd4,?$ListNode@VRNode@@,.?AV?$ListNode@VRNode@@@@,class,,
+0x0042785c,?$ListNode@VRParticleSystem@@,.?AV?$ListNode@VRParticleSystem@@@@,class,,
+0x004403ec,?$ListNode@VRSpritePointSystem@@,.?AV?$ListNode@VRSpritePointSystem@@@@,class,,
+0x0043bb84,?$ListNode@VTAI@@,.?AV?$ListNode@VTAI@@@@,class,,
+0x004291fc,?$LPool@K,.?AV?$LPool@K@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042768c,?$LPool@PAVCLightNode@@,.?AV?$LPool@PAVCLightNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a774,?$LPool@PAVCPhysicsRegion@@,.?AV?$LPool@PAVCPhysicsRegion@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a6b8,?$LPool@PAVCPhysNode@@,.?AV?$LPool@PAVCPhysNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004275dc,?$LPool@PAVCRRegion@@,.?AV?$LPool@PAVCRRegion@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043a4b8,?$LPool@PAVCZoneFace@CZone@@,.?AV?$LPool@PAVCZoneFace@CZone@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042752c,?$LPool@PAVRZoneNode@@,.?AV?$LPool@PAVRZoneNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429220,?$LPool@U?$CharData@$0BA@@LStringAllocatorBase@@,.?AV?$LPool@U?$CharData@$0BA@@LStringAllocatorBase@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429294,?$LPool@U?$CharData@$0CA@@LStringAllocatorBase@@,.?AV?$LPool@U?$CharData@$0CA@@LStringAllocatorBase@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429308,?$LPool@U?$CharData@$0EA@@LStringAllocatorBase@@,.?AV?$LPool@U?$CharData@$0EA@@LStringAllocatorBase@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00428c48,?$LPool@UBigMatrixData@@,.?AV?$LPool@UBigMatrixData@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00428c8c,?$LPool@UBigVectorData@@,.?AV?$LPool@UBigVectorData@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d910,?$LPool@UStateMem@@,.?AV?$LPool@UStateMem@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e608,?$LPool@V?$CTanisMsg@UMsgControlEvent@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgControlEvent@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e5cc,?$LPool@V?$CTanisMsg@UMsgCreateObjData@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgCreateObjData@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e260,?$LPool@V?$CTanisMsg@UMsgData@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgData@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e380,?$LPool@V?$CTanisMsg@UMsgFloat1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgFloat1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e3dc,?$LPool@V?$CTanisMsg@UMsgFloat2@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgFloat2@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e290,?$LPool@V?$CTanisMsg@UMsgInt1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgInt1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e348,?$LPool@V?$CTanisMsg@UMsgInt1Float1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgInt1Float1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e2c0,?$LPool@V?$CTanisMsg@UMsgInt2@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgInt2@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e2f0,?$LPool@V?$CTanisMsg@UMsgInt3@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgInt3@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e4e0,?$LPool@V?$CTanisMsg@UMsgQuat1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgQuat1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e438,?$LPool@V?$CTanisMsg@UMsgString1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgString1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e46c,?$LPool@V?$CTanisMsg@UMsgString1Int2@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgString1Int2@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e4a4,?$LPool@V?$CTanisMsg@UMsgString1Vector1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgString1Vector1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e514,?$LPool@V?$CTanisMsg@UMsgVector1@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgVector1@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e570,?$LPool@V?$CTanisMsg@UMsgVector2@@@@,.?AV?$LPool@V?$CTanisMsg@UMsgVector2@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00482438,?$LPool@VAChanelTrackInfo@AChannel@@,.?AV?$LPool@VAChanelTrackInfo@AChannel@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00482494,?$LPool@VAChannel@@,.?AV?$LPool@VAChannel@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004823dc,?$LPool@VAInst@@,.?AV?$LPool@VAInst@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a664,?$LPool@VBSPNode@CNodeBSPTree@@,.?AV?$LPool@VBSPNode@CNodeBSPTree@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427618,?$LPool@VBSPTreeNode@?$CBSPTree@VCLightNode@@@@,.?AV?$LPool@VBSPTreeNode@?$CBSPTree@VCLightNode@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a6f8,?$LPool@VBSPTreeNode@?$CBSPTree@VCPhysicsRegion@@@@,.?AV?$LPool@VBSPTreeNode@?$CBSPTree@VCPhysicsRegion@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042756c,?$LPool@VBSPTreeNode@?$CBSPTree@VCRRegion@@@@,.?AV?$LPool@VBSPTreeNode@?$CBSPTree@VCRRegion@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004274b8,?$LPool@VBSPTreeNode@?$CBSPTree@VRZoneNode@@@@,.?AV?$LPool@VBSPTreeNode@?$CBSPTree@VRZoneNode@@@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042aa98,?$LPool@VCAlphaObject@CDrawPoly@@,.?AV?$LPool@VCAlphaObject@CDrawPoly@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043ca34,?$LPool@VCBlasterBolt@@,.?AV?$LPool@VCBlasterBolt@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043a5b0,?$LPool@VCCallbackEvent@@,.?AV?$LPool@VCCallbackEvent@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a5cc,?$LPool@VCContact@@,.?AV?$LPool@VCContact@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d46c,?$LPool@VCEntity@@,.?AV?$LPool@VCEntity@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d628,?$LPool@VCEntityAnimationObject@@,.?AV?$LPool@VCEntityAnimationObject@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d4fc,?$LPool@VCEntityCharacter@@,.?AV?$LPool@VCEntityCharacter@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d680,?$LPool@VCEntityDoor@@,.?AV?$LPool@VCEntityDoor@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d6c4,?$LPool@VCEntityElevator@@,.?AV?$LPool@VCEntityElevator@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043fb08,?$LPool@VCEntityEquipment@@,.?AV?$LPool@VCEntityEquipment@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d710,?$LPool@VCEntityForceField@@,.?AV?$LPool@VCEntityForceField@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043f634,?$LPool@VCEntityHuman@@,.?AV?$LPool@VCEntityHuman@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d8c8,?$LPool@VCEntityPowerup@@,.?AV?$LPool@VCEntityPowerup@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d7a0,?$LPool@VCEntitySFD@@,.?AV?$LPool@VCEntitySFD@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d7e0,?$LPool@VCEntitySithGunShip@@,.?AV?$LPool@VCEntitySithGunShip@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d75c,?$LPool@VCEntitySpline@@,.?AV?$LPool@VCEntitySpline@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00440320,?$LPool@VCEntitySplineTank@@,.?AV?$LPool@VCEntitySplineTank@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d830,?$LPool@VCEntityStap@@,.?AV?$LPool@VCEntityStap@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d548,?$LPool@VCEntitySwitch@@,.?AV?$LPool@VCEntitySwitch@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d874,?$LPool@VCEntityUberGenerator@@,.?AV?$LPool@VCEntityUberGenerator@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043ca78,?$LPool@VCFaceFragment@@,.?AV?$LPool@VCFaceFragment@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043ffe4,?$LPool@VCFlashlightNode@@,.?AV?$LPool@VCFlashlightNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d5e8,?$LPool@VCInventory@@,.?AV?$LPool@VCInventory@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00428cd0,?$LPool@VCNodeExtraInfo@@,.?AV?$LPool@VCNodeExtraInfo@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042727c,?$LPool@VCOcclusionVolume@@,.?AV?$LPool@VCOcclusionVolume@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d4a8,?$LPool@VContactInfo@CEntity@@,.?AV?$LPool@VContactInfo@CEntity@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429030,?$LPool@VControlEvent@@,.?AV?$LPool@VControlEvent@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427c10,?$LPool@VCResourceContainer_Directory@@,.?AV?$LPool@VCResourceContainer_Directory@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043fb7c,?$LPool@VCSpriteEfx@@,.?AV?$LPool@VCSpriteEfx@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c5ec,?$LPool@VCTanisAnimNode@@,.?AV?$LPool@VCTanisAnimNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c9d8,?$LPool@VCTanisCharacterNode_Point@@,.?AV?$LPool@VCTanisCharacterNode_Point@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043caa0,?$LPool@VCTanisFistNode@@,.?AV?$LPool@VCTanisFistNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c8c4,?$LPool@VCTanisForceShieldNode@@,.?AV?$LPool@VCTanisForceShieldNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00440784,?$LPool@VCTanisGenericMeleNode@@,.?AV?$LPool@VCTanisGenericMeleNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c870,?$LPool@VCTanisIntangibleNode@@,.?AV?$LPool@VCTanisIntangibleNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c6b4,?$LPool@VCTanisMovableObjNode@@,.?AV?$LPool@VCTanisMovableObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c708,?$LPool@VCTanisMovablePointMassObjNode@@,.?AV?$LPool@VCTanisMovablePointMassObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c5c8,?$LPool@VCTanisNode@@,.?AV?$LPool@VCTanisNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c918,?$LPool@VCTanisNodeAnimatedObject@@,.?AV?$LPool@VCTanisNodeAnimatedObject@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c974,?$LPool@VCTanisNodeProceduralCylinder@@,.?AV?$LPool@VCTanisNodeProceduralCylinder@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c81c,?$LPool@VCTanisNodeRopeObject@@,.?AV?$LPool@VCTanisNodeRopeObject@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043f174,?$LPool@VCTanisParticleSystem@@,.?AV?$LPool@VCTanisParticleSystem@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c634,?$LPool@VCTanisPhysObjNode@@,.?AV?$LPool@VCTanisPhysObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c76c,?$LPool@VCTanisPointMassObjNode@@,.?AV?$LPool@VCTanisPointMassObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c7c4,?$LPool@VCTanisRigidBodyObjNode@@,.?AV?$LPool@VCTanisRigidBodyObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e640,?$LPool@VCTanisSound@@,.?AV?$LPool@VCTanisSound@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00440498,?$LPool@VCTanisSpritePointSystem@@,.?AV?$LPool@VCTanisSpritePointSystem@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043c660,?$LPool@VCTanisStaticObjNode@@,.?AV?$LPool@VCTanisStaticObjNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043f088,?$LPool@VCTGenNodeEffect@@,.?AV?$LPool@VCTGenNodeEffect@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043f0d4,?$LPool@VCTGenNodeEntity@@,.?AV?$LPool@VCTGenNodeEntity@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043f120,?$LPool@VCTGenNodeParticleSys@@,.?AV?$LPool@VCTGenNodeParticleSys@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00440468,?$LPool@VCTGenNodeSpritePoints@@,.?AV?$LPool@VCTGenNodeSpritePoints@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043a468,?$LPool@VCZoneBSPNode@CZone@@,.?AV?$LPool@VCZoneBSPNode@CZone@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d424,?$LPool@VEntityNodeInfo@@,.?AV?$LPool@VEntityNodeInfo@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004290bc,?$LPool@VGamepadEvent@@,.?AV?$LPool@VGamepadEvent@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e684,?$LPool@VIndexPan@@,.?AV?$LPool@VIndexPan@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e6c0,?$LPool@VIndexPos@@,.?AV?$LPool@VIndexPos@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043d58c,?$LPool@VInventoryItem@CInventory@@,.?AV?$LPool@VInventoryItem@CInventory@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429098,?$LPool@VKeyEvent@@,.?AV?$LPool@VKeyEvent@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042937c,?$LPool@VLTokenHandler@@,.?AV?$LPool@VLTokenHandler@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004293c0,?$LPool@VLTokenHandlerTable@@,.?AV?$LPool@VLTokenHandlerTable@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00429058,?$LPool@VMouseEvent@@,.?AV?$LPool@VMouseEvent@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0042a608,?$LPool@VOverlapRecord@CPhysNode@@,.?AV?$LPool@VOverlapRecord@CPhysNode@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004272a8,?$LPool@VRParticle@@,.?AV?$LPool@VRParticle@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004272e4,?$LPool@VRParticleGeneratorGeneric@@,.?AV?$LPool@VRParticleGeneratorGeneric@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x004273d0,?$LPool@VRParticleMoverGeneric@@,.?AV?$LPool@VRParticleMoverGeneric@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427400,?$LPool@VRParticleMoverSmoke@@,.?AV?$LPool@VRParticleMoverSmoke@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427374,?$LPool@VRParticleRendererAnimated@@,.?AV?$LPool@VRParticleRendererAnimated@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427318,?$LPool@VRParticleRendererGeneric@@,.?AV?$LPool@VRParticleRendererGeneric@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x00427430,?$LPool@VRParticleSystemGeneric@@,.?AV?$LPool@VRParticleSystemGeneric@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043fbe4,?$LPool@VSFXCLight@@,.?AV?$LPool@VSFXCLight@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043fbbc,?$LPool@VSFXTanisLight@@,.?AV?$LPool@VSFXTanisLight@@@@,class,single,LPoolBase@0 ?$ListNode@VLPoolBase@@@4
+0x0043e078,?$LSArray@VCVector@@$07,.?AV?$LSArray@VCVector@@$07@@,class,single,?$LArray@VCVector@@@0
+0x0043e050,?$LSArray@VCVector@@$0CA@,.?AV?$LSArray@VCVector@@$0CA@@@,class,single,?$LArray@VCVector@@@0
+0x0043b1e0,?$LSCArray@UFragTableEntry@@$0PP@,.?AV?$LSCArray@UFragTableEntry@@$0PP@@@,class,single,?$LArray@UFragTableEntry@@@0
+0x0043b5a8,?$LVariant_Typed@_N,.?AV?$LVariant_Typed@_N@@,class,single,LVariant@0
+0x00426ef4,?$LVariant_Typed@H,.?AV?$LVariant_Typed@H@@,class,single,LVariant@0
+0x00426f18,?$LVariant_Typed@M,.?AV?$LVariant_Typed@M@@,class,single,LVariant@0
+0x00426f3c,?$LVariant_Typed@V?$LVector@VLString@@@@,.?AV?$LVariant_Typed@V?$LVector@VLString@@@@@@,class,single,LVariant@0
+0x0043b740,?$LVariant_Typed@VAnimTableEntry@@,.?AV?$LVariant_Typed@VAnimTableEntry@@@@,class,single,LVariant@0
+0x0043b630,?$LVariant_Typed@VAttackPattern@@,.?AV?$LVariant_Typed@VAttackPattern@@@@,class,single,LVariant@0
+0x0043b710,?$LVariant_Typed@VAudTableEntry@@,.?AV?$LVariant_Typed@VAudTableEntry@@@@,class,single,LVariant@0
+0x00425c38,?$LVariant_Typed@VCVector@@,.?AV?$LVariant_Typed@VCVector@@@@,class,single,LVariant@0
+0x00427a88,?$LVariant_Typed@VLColor@@,.?AV?$LVariant_Typed@VLColor@@@@,class,single,LVariant@0
+0x0043b5cc,?$LVariant_Typed@VLPackedColor@@,.?AV?$LVariant_Typed@VLPackedColor@@@@,class,single,LVariant@0
+0x00425cc8,?$LVariant_Typed@VLString@@,.?AV?$LVariant_Typed@VLString@@@@,class,single,LVariant@0
+0x0043b5fc,?$LVariant_Typed@VStateTextureData@@,.?AV?$LVariant_Typed@VStateTextureData@@@@,class,single,LVariant@0
+0x00425fe0,?$num_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std,.?AV?$num_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@,class,single,std::locale::facet@0
+0x0042614c,?$numpunct@D@std,.?AV?$numpunct@D@std@@,class,single,std::locale::facet@0
+0x00440b04,__non_rtti_object,.?AV__non_rtti_object@@,class,,
+0x00426bbc,_CNode,.?AV_CNode@@,class,single,
+0x0043d334,AChannel,.?AVAChannel@@,class,single,
+0x0048246c,AChannel::AChanelTrackInfo,.?AVAChanelTrackInfo@AChannel@@,class,,
+0x0043e71c,AInst,.?AVAInst@@,class,single,
+0x0043c038,ammAmbush,.?AVammAmbush@@,class,single,ammUseOrientedNode@0 AttackMoveMode@0
+0x0043bf44,ammBackoff,.?AVammBackoff@@,class,single,AttackMoveMode@0
+0x0043bfa0,ammCircleStrafe,.?AVammCircleStrafe@@,class,single,AttackMoveMode@0
+0x0043be8c,ammEnemyDetected,.?AVammEnemyDetected@@,class,single,AttackMoveMode@0
+0x0043c020,ammFollow,.?AVammFollow@@,class,single,AttackMoveMode@0
+0x0043bf60,ammKeepDistance,.?AVammKeepDistance@@,class,single,AttackMoveMode@0
+0x0043bf80,ammMeleeAttack,.?AVammMeleeAttack@@,class,single,AttackMoveMode@0
+0x0043bfc0,ammReadyDistance,.?AVammReadyDistance@@,class,single,AttackMoveMode@0
+0x0043bee8,ammReturnToOrigin,.?AVammReturnToOrigin@@,class,single,AttackMoveMode@0
+0x0043bf2c,ammSnipe,.?AVammSnipe@@,class,single,ammUseOrientedNode@0 AttackMoveMode@0
+0x0043bec8,ammStandNoTurn,.?AVammStandNoTurn@@,class,single,AttackMoveMode@0
+0x0043beac,ammStandStill,.?AVammStandStill@@,class,single,AttackMoveMode@0
+0x0043be74,ammTaunt,.?AVammTaunt@@,class,single,AttackMoveMode@0
+0x0043bf08,ammUseOrientedNode,.?AVammUseOrientedNode@@,class,,
+0x0043bfe0,ammUseTurret,.?AVammUseTurret@@,class,single,ammUseOrientedNode@0 AttackMoveMode@0
+0x0043be58,ammVictory,.?AVammVictory@@,class,single,AttackMoveMode@0
+0x0043b058,Animation,.?AVAnimation@@,class,multiple,LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@52
+0x00482364,AnimationParser,.?AVAnimationParser@@,class,single,LFormatParser@0
+0x0043c4e4,ANode,.?AVANode@@,class,single,_CNode@0
+0x0043da68,ATrack,.?AVATrack@@,class,single,LSaveRestore@0
+0x00482384,ATrackParser,.?AVATrackParser@@,class,single,LFormatParser@0
+0x0043be38,AttackMoveMode,.?AVAttackMoveMode@@,class,,
+0x0043e19c,AudioIndexBaseClass,.?AVAudioIndexBaseClass@@,class,,
+0x0043dcc0,AudioProgressBar,.?AVAudioProgressBar@@,class,,
+0x004260fc,bad_cast,.?AVbad_cast@@,class,,
+0x00440b24,bad_typeid,.?AVbad_typeid@@,class,,
+0x00428c70,BigMatrixData,.?AUBigMatrixData@@,struct,,
+0x00428cb4,BigVectorData,.?AUBigVectorData@@,struct,,
+0x00427658,BSPTreeNode@?$CBSPTree@VCLightNode@@,.?AVBSPTreeNode@?$CBSPTree@VCLightNode@@@@,class,,
+0x0042a73c,BSPTreeNode@?$CBSPTree@VCPhysicsRegion@@,.?AVBSPTreeNode@?$CBSPTree@VCPhysicsRegion@@@@,class,,
+0x004275a8,BSPTreeNode@?$CBSPTree@VCRRegion@@,.?AVBSPTreeNode@?$CBSPTree@VCRRegion@@@@,class,,
+0x004274f8,BSPTreeNode@?$CBSPTree@VRZoneNode@@,.?AVBSPTreeNode@?$CBSPTree@VRZoneNode@@@@,class,,
+0x0043f028,CActParser,.?AVCActParser@@,class,single,LFormatParser@0
+0x004276d0,Camera,.?AVCamera@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x00425b70,CameraMan,.?AVCameraMan@@,class,single,
+0x0043aa74,CameraManAttached,.?AVCameraManAttached@@,class,single,CameraMan@0
+0x0043df30,CameraManAttachedRotatable,.?AVCameraManAttachedRotatable@@,class,virtual,CameraManRotatable@56 CameraMan@0 CameraManZoomable@0 CameraMan@0
+0x0043aab4,CameraManAttachedTrack,.?AVCameraManAttachedTrack@@,class,virtual,CameraManAttached@56 CameraMan@0 CameraManTrack@88 CameraMan@0 CameraManZoomable@0 CameraMan@0
+0x0043e74c,CameraManBinoculars,.?AVCameraManBinoculars@@,class,single,CameraManZoomable@0 CameraMan@0
+0x0043deec,CameraManFixed,.?AVCameraManFixed@@,class,virtual,CameraManMovable@0 CameraMan@0 CameraManRotatable@116 CameraMan@0 CameraManZoomable@60 CameraMan@0
+0x0043df0c,CameraManFixedTrack,.?AVCameraManFixedTrack@@,class,virtual,CameraManMovable@0 CameraMan@0 CameraManTrack@116 CameraMan@0 CameraManZoomable@60 CameraMan@0
+0x0043dc5c,CameraManMovable,.?AVCameraManMovable@@,class,single,CameraMan@0
+0x0043dca0,CameraManOrbit,.?AVCameraManOrbit@@,class,single,CameraManTrack@0 CameraMan@0
+0x0043decc,CameraManPlayer,.?AVCameraManPlayer@@,class,single,CameraManTether@0 CameraManTrack@0 CameraMan@0
+0x0043e78c,CameraManPlayerBinoculars,.?AVCameraManPlayerBinoculars@@,class,virtual,CameraManBinoculars@0 CameraManZoomable@0 CameraMan@0 CameraManPlayer@64 CameraManTether@64 CameraManTrack@64 CameraMan@0
+0x0043dc7c,CameraManRotatable,.?AVCameraManRotatable@@,class,single,CameraMan@0
+0x0043e7b4,CameraManScriptedBinoculars,.?AVCameraManScriptedBinoculars@@,class,virtual,CameraManBinoculars@0 CameraManZoomable@0 CameraMan@0 CameraManFixed@64 CameraManMovable@64 CameraMan@0 CameraManRotatable@180 CameraMan@0 CameraManZoomable@124 CameraMan@0
+0x0043deac,CameraManTether,.?AVCameraManTether@@,class,single,CameraManTrack@0 CameraMan@0
+0x00425f5c,CameraManTrack,.?AVCameraManTrack@@,class,single,CameraMan@0
+0x0043aa94,CameraManZoomable,.?AVCameraManZoomable@@,class,single,CameraMan@0
+0x00425de0,CAnimTable,.?AVCAnimTable@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00428d30,CAPoly,.?AVCAPoly@@,class,single,CPlane@4
+0x0043cd44,CAttachment,.?AVCAttachment@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00425d24,CAudioTable,.?AVCAudioTable@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0043b0ac,CBendSpring,.?AVCBendSpring@@,class,single,CSpring@0 ?$ListNode@VCSpring@@@4
+0x00427df4,CBinocularsDisplay,.?AVCBinocularsDisplay@@,class,single,COverlay@0 CCallbackManager@0
+0x0043ca5c,CBlasterBolt,.?AVCBlasterBolt@@,class,virtual,CProjectile@0 CNodeParticle@0 _CNode@0 ?$ListNode@VCNodeParticle@@@4 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CLightNode@92 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@96 CBSPTreeItem@104 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x00425e60,CBox,.?AVCBox@@,class,single,CPrimitive@0 LSaveRestore@0
+0x004261cc,CBqfCommandHandler,.?AVCBqfCommandHandler@@,class,single,CCommandHandler@0
+0x0043a53c,CBSPnode,.?AVCBSPnode@@,class,,
+0x0043a554,CBSPtree,.?AVCBSPtree@@,class,virtual,CBSPnode@0 CPlane@0 CPolySet@0
+0x004276e8,CBSPTreeItem,.?AVCBSPTreeItem@@,class,,
+0x00427bc4,CBundleServices,.?AVCBundleServices@@,class,single,LFileServices@0
+0x0043a638,CCallback,.?AVCCallback@@,class,single,
+0x0043a5d8,CCallbackEvent,.?AVCCallbackEvent@@,class,,
+0x00427dbc,CCallbackManager,.?AVCCallbackManager@@,class,single,
+0x00440010,CCharacterEquipmentBuiltIn,.?AVCCharacterEquipmentBuiltIn@@,class,single,CCharacterEquipmentController@0
+0x00428750,CCharacterEquipmentController,.?AVCCharacterEquipmentController@@,class,single,
+0x0043f864,CCharacterEquipmentDed,.?AVCCharacterEquipmentDed@@,class,single,CCharacterEquipmentController@0
+0x0043f88c,CCharacterEquipmentFists,.?AVCCharacterEquipmentFists@@,class,single,CCharacterEquipmentController@0
+0x0043f8b4,CCharacterEquipmentHolster,.?AVCCharacterEquipmentHolster@@,class,single,CCharacterEquipmentController@0
+0x0043da24,CCharacterGestureManager,.?AVCCharacterGestureManager@@,class,single,
+0x0043c354,CCharacterState,.?AVCCharacterState@@,class,single,
+0x0043d124,CCharacterStateCower,.?AVCCharacterStateCower@@,class,single,CCharacterState@0
+0x0043d148,CCharacterStateDeath,.?AVCCharacterStateDeath@@,class,single,CCharacterState@0
+0x0043fe3c,CCharacterStateDedRoll,.?AVCCharacterStateDedRoll@@,class,single,CCharacterState@0
+0x0043d16c,CCharacterStateFall,.?AVCCharacterStateFall@@,class,single,CCharacterState@0
+0x0043d200,CCharacterStateHit,.?AVCCharacterStateHit@@,class,single,CCharacterState@0
+0x0043ff04,CCharacterStateIdle2,.?AVCCharacterStateIdle2@@,class,single,CCharacterState@0
+0x0043d190,CCharacterStateIonBlasted,.?AVCCharacterStateIonBlasted@@,class,single,CCharacterState@0
+0x0043d1b8,CCharacterStateLand,.?AVCCharacterStateLand@@,class,single,CCharacterState@0
+0x0043d94c,CCharacterStateStand,.?AVCCharacterStateStand@@,class,single,CCharacterState@0
+0x004400dc,CCharacterStateStunned,.?AVCCharacterStateStunned@@,class,single,CCharacterState@0
+0x0043d1dc,CCharacterStateThrown,.?AVCCharacterStateThrown@@,class,single,CCharacterState@0
+0x004261f0,CCjpCommandHandler,.?AVCCjpCommandHandler@@,class,single,CCommandHandler@0
+0x0042881c,CClient,.?AVCClient@@,class,multiple,CMessageHandler@0 CCommandHandler@16
+0x00426a90,CClipVolume,.?AVCClipVolume@@,class,single,
+0x0043a504,CCollapseMap,.?AVCCollapseMap@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0042a17c,CCollBox,.?AVCCollBox@@,class,single,CCollisionPrim@0 CPrimitive@0 LSaveRestore@0
+0x0042a15c,CCollisionPrim,.?AVCCollisionPrim@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0042a194,CCollSphere,.?AVCCollSphere@@,class,single,CCollisionPrim@0 CPrimitive@0 LSaveRestore@0
+0x0043ece0,CCollZone,.?AVCCollZone@@,class,virtual,CCollisionPrim@0 CPrimitive@0 LSaveRestore@0 CZone@0 CMesh@0 CPrimitive@0 LSaveRestore@0
+0x004261ac,CCommandHandler,.?AVCCommandHandler@@,class,single,
+0x00427fc4,CCommunicator,.?AVCCommunicator@@,class,single,COverlay@0 CCallbackManager@0
+0x0042a7c0,CCompoundCollPrim,.?AVCCompoundCollPrim@@,class,single,CCollisionPrim@0 CPrimitive@0 LSaveRestore@0
+0x00428268,CConsoleDevice,.?AVCConsoleDevice@@,class,single,
+0x00428f38,CConsoleVarMgr,.?AVCConsoleVarMgr@@,class,single,CCommandHandler@0
+0x0042a5f0,CContact,.?AVCContact@@,class,,
+0x0043dab8,CControllableEntity,.?AVCControllableEntity@@,class,multiple,CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x00428158,CCredits,.?AVCCredits@@,class,single,COverlay@0 CCallbackManager@0
+0x00426214,CCrjCommandHandler,.?AVCCrjCommandHandler@@,class,single,CCommandHandler@0
+0x00426238,CCsbCommandHandler,.?AVCCsbCommandHandler@@,class,single,CCommandHandler@0
+0x0042aa3c,CD3DContext,.?AVCD3DContext@@,class,single,CDrawContext@0
+0x004263fc,CD3DTexture,.?AVCD3DTexture@@,class,single,CTexture@0 ?$ListNode@VCTexture@@@4
+0x0043a654,CDataBaseValueBase,.?AVCDataBaseValueBase@@,class,single,CCallbackManager@0
+0x0043a850,CDataBaseValueTypeless,.?AVCDataBaseValueTypeless@@,class,single,CDataBaseValueBase@0 CCallbackManager@0
+0x00428850,CDebugMenu,.?AVCDebugMenu@@,class,single,CTextMenu@0 CTextMenuElement@0
+0x0043f06c,CDebugSphere,.?AVCDebugSphere@@,class,virtual,CRSpherePrim@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CSpherePrim@0 CPrimitive@0 LSaveRestore@0 CCollSphere@1172 CCollisionPrim@0 CPrimitive@0 LSaveRestore@0
+0x0043dfe8,CDialog,.?AVCDialog@@,class,single,LResource@0 ?$ListNode@VLResource@@@4
+0x0043efb4,CDialogParser,.?AVCDialogParser@@,class,single,LFormatParser@0
+0x0043e6fc,CDialogResource,.?AVCDialogResource@@,class,single,
+0x00427090,CDiamond,.?AVCDiamond@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0042aa20,CDrawContext,.?AVCDrawContext@@,class,single,
+0x0042aac8,CDrawPoly::CAlphaObject,.?AVCAlphaObject@CDrawPoly@@,class,,
+0x00425d98,CDsc,.?AVCDsc@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00425dc4,CDscGenerator,.?AVCDscGenerator@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0042778c,CDscLight,.?AVCDscLight@@,class,single,LResource@0 ?$ListNode@VLResource@@@4
+0x00426b9c,CDscLightParser,.?AVCDscLightParser@@,class,single,LFormatParser@0
+0x00425d5c,CDscProjectile,.?AVCDscProjectile@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00425d40,CDscSprite,.?AVCDscSprite@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0043edf0,CDummyWorldObject,.?AVCDummyWorldObject@@,class,single,CWorldObject@0 CMessageHandler@0
+0x00426b34,CDynMesh,.?AVCDynMesh@@,class,single,CPrimitive@0 LSaveRestore@0
+0x00427e18,CEnemyHealthMeter,.?AVCEnemyHealthMeter@@,class,single,COverlay@0 CCallbackManager@0
+0x0043fc70,CEnergyBeamEfx,.?AVCEnergyBeamEfx@@,class,virtual,CSpriteEfx@0 CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x0043d490,CEntity,.?AVCEntity@@,class,multiple,CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043d4d8,CEntity::ContactInfo,.?AVContactInfo@CEntity@@,class,,
+0x0043d658,CEntityAnimationObject,.?AVCEntityAnimationObject@@,class,multiple,CControllableEntity@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043d528,CEntityCharacter,.?AVCEntityCharacter@@,class,multiple,CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043dc38,CEntityCharacterRef,.?AVCEntityCharacterRef@@,class,single,CEntityRef@0 ?$ListNode@VCEntityRef@@@4
+0x0043d6a8,CEntityDoor,.?AVCEntityDoor@@,class,multiple,CControllableEntity@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043d6f0,CEntityElevator,.?AVCEntityElevator@@,class,multiple,CControllableEntity@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043ee58,CEntityEquipment,.?AVCEntityEquipment@@,class,multiple,CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043f754,CEntityEquipment_Driver,.?AVCEntityEquipment_Driver@@,class,single,
+0x0043f77c,CEntityEquipment_DriverBinoculars,.?AVCEntityEquipment_DriverBinoculars@@,class,single,CEntityEquipment_Driver@0
+0x0043f7ac,CEntityEquipment_DriverBlaster,.?AVCEntityEquipment_DriverBlaster@@,class,single,CEntityEquipment_Driver@0
+0x0043f98c,CEntityEquipment_DriverBlaster_ChargeUp,.?AVCEntityEquipment_DriverBlaster_ChargeUp@@,class,single,CEntityEquipment_DriverBlaster@0 CEntityEquipment_Driver@0
+0x0043f958,CEntityEquipment_DriverBlaster_Scope,.?AVCEntityEquipment_DriverBlaster_Scope@@,class,single,CEntityEquipment_DriverBlaster@0 CEntityEquipment_Driver@0
+0x0043fad0,CEntityEquipment_DriverConcussionGrenade,.?AVCEntityEquipment_DriverConcussionGrenade@@,class,single,CEntityEquipment_DriverGrenade@0 CEntityEquipment_Driver@0
+0x0043f808,CEntityEquipment_DriverDemPack,.?AVCEntityEquipment_DriverDemPack@@,class,single,CEntityEquipment_Driver@0
+0x0043f9c4,CEntityEquipment_DriverGrenade,.?AVCEntityEquipment_DriverGrenade@@,class,,
+0x0043f9f4,CEntityEquipment_DriverInventoryItem,.?AVCEntityEquipment_DriverInventoryItem@@,class,single,CEntityEquipment_Driver@0
+0x0043f838,CEntityEquipment_DriverMele,.?AVCEntityEquipment_DriverMele@@,class,single,CEntityEquipment_Driver@0
+0x0043f7dc,CEntityEquipment_DriverSaber,.?AVCEntityEquipment_DriverSaber@@,class,single,CEntityEquipment_Driver@0
+0x0043fa28,CEntityEquipment_DriverScatterGrenade,.?AVCEntityEquipment_DriverScatterGrenade@@,class,single,CEntityEquipment_DriverGrenade@0 CEntityEquipment_Driver@0
+0x0043d73c,CEntityForceField,.?AVCEntityForceField@@,class,multiple,CEntityDoor@0 CControllableEntity@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043ee78,CEntityHuman,.?AVCEntityHuman@@,class,multiple,CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043d8f0,CEntityPowerup,.?AVCEntityPowerup@@,class,multiple,CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x00425e44,CEntityRef,.?AVCEntityRef@@,class,single,?$ListNode@VCEntityRef@@@4
+0x0043eda0,CEntityRefWithWakeup,.?AVCEntityRefWithWakeup@@,class,single,CEntityRef@0 ?$ListNode@VCEntityRef@@@4
+0x0043d7c4,CEntitySFD,.?AVCEntitySFD@@,class,multiple,CEntitySpline@0 CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043d80c,CEntitySithGunShip,.?AVCEntitySithGunShip@@,class,multiple,CEntitySpline@0 CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043d784,CEntitySpline,.?AVCEntitySpline@@,class,multiple,CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043ee9c,CEntitySplineTank,.?AVCEntitySplineTank@@,class,multiple,CEntitySpline@0 CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043d858,CEntityStap,.?AVCEntityStap@@,class,multiple,CEntitySpline@0 CEntityCharacter@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16 ChoreStateMachine@616
+0x0043d570,CEntitySwitch,.?AVCEntitySwitch@@,class,multiple,CControllableEntity@0 CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043d8a4,CEntityUberGenerator,.?AVCEntityUberGenerator@@,class,multiple,CEntity@0 CCallbackManager@0 CWorldObject@16 CMessageHandler@16
+0x0043c5ac,CFaceFragment,.?AVCFaceFragment@@,class,virtual,CProjectile@0 CNodeParticle@0 _CNode@0 ?$ListNode@VCNodeParticle@@@4 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CLightNode@92 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@96 CBSPTreeItem@104 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x004280b4,CFadeOverlay,.?AVCFadeOverlay@@,class,single,COverlay@0 CCallbackManager@0
+0x0043fc90,CFireEfx,.?AVCFireEfx@@,class,virtual,CSpriteEfx@0 CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x004278a8,CFireMaterial,.?AVCFireMaterial@@,class,single,CMaterial@0 ?$ListNode@VCMaterial@@@4
+0x0043ffc4,CFlashlightNode,.?AVCFlashlightNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0042813c,CFlashOverlay,.?AVCFlashOverlay@@,class,single,COverlay@0 CCallbackManager@0
+0x00427904,CFlipbookMaterial,.?AVCFlipbookMaterial@@,class,single,CMaterial@0 ?$ListNode@VCMaterial@@@4
+0x00427e9c,CFontViewer,.?AVCFontViewer@@,class,single,COverlay@0 CCallbackManager@0
+0x0043d9b0,CForceCharacter,.?AVCForceCharacter@@,class,single,CForcePower@0 ?$ListNode@VCForcePower@@@4
+0x0043d994,CForceObject,.?AVCForceObject@@,class,single,CForcePower@0 ?$ListNode@VCForcePower@@@4
+0x0043d24c,CForcePower,.?AVCForcePower@@,class,single,?$ListNode@VCForcePower@@@4
+0x0043d970,CForcePullEquipment,.?AVCForcePullEquipment@@,class,single,CForcePower@0 ?$ListNode@VCForcePower@@@4
+0x0043ea24,CForceRipple,.?AVCForceRipple@@,class,single,RThickLine@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043d34c,CForceSaberThrow,.?AVCForceSaberThrow@@,class,single,CForcePower@0 ?$ListNode@VCForcePower@@@4
+0x00427058,CForceShield,.?AVCForceShield@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0043d36c,CForceSlowMo,.?AVCForceSlowMo@@,class,single,CForcePower@0 ?$ListNode@VCForcePower@@@4
+0x00425dac,CGeoDsc,.?AVCGeoDsc@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x004279c4,CGlobalFlipbookMaterial,.?AVCGlobalFlipbookMaterial@@,class,single,CFlipbookMaterial@0 CMaterial@0 ?$ListNode@VCMaterial@@@4
+0x0043a894,CHitPointTracker,.?AVCHitPointTracker@@,class,single,?$CDataBaseValue@M@0 CDataBaseValueBase@0 CCallbackManager@0
+0x0043dadc,ChoreStateMachine,.?AVChoreStateMachine@@,class,,
+0x00427fe0,CHUD,.?AVCHUD@@,class,single,COverlay@0 CCallbackManager@0
+0x0043f8e0,CHumanEquipmentDemPack,.?AVCHumanEquipmentDemPack@@,class,single,CCharacterEquipmentController@0
+0x0043fa5c,CHumanEquipmentGun,.?AVCHumanEquipmentGun@@,class,single,CCharacterEquipmentController@0
+0x0043fa80,CHumanEquipmentInventoryItem,.?AVCHumanEquipmentInventoryItem@@,class,single,CCharacterEquipmentController@0
+0x0043f908,CHumanEquipmentMelee,.?AVCHumanEquipmentMelee@@,class,single,CCharacterEquipmentController@0
+0x0042877c,CHumanEquipmentSaber,.?AVCHumanEquipmentSaber@@,class,single,CHumanEquipmentMelee@0 CCharacterEquipmentController@0
+0x0043c050,CHumanEquipmentSimpleMele,.?AVCHumanEquipmentSimpleMele@@,class,single,CHumanEquipmentMelee@0 CCharacterEquipmentController@0
+0x0043faac,CHumanEquipmentThrow,.?AVCHumanEquipmentThrow@@,class,single,CCharacterEquipmentController@0
+0x0043f43c,CHumanState,.?AVCHumanState@@,class,,
+0x0043f458,CHumanStateAerial,.?AVCHumanStateAerial@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f67c,CHumanStateBDDeath,.?AVCHumanStateBDDeath@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f478,CHumanStateCannon,.?AVCHumanStateCannon@@,class,single,CCharacterState@0
+0x0043c374,CHumanStateCrouch,.?AVCHumanStateCrouch@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f498,CHumanStateDive,.?AVCHumanStateDive@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f5f0,CHumanStateFall,.?AVCHumanStateFall@@,class,single,CCharacterStateFall@0 CCharacterState@0
+0x0043f4b8,CHumanStateFallDown,.?AVCHumanStateFallDown@@,class,single,CCharacterState@0
+0x0043f4dc,CHumanStateGetUp,.?AVCHumanStateGetUp@@,class,single,CCharacterState@0
+0x0043f610,CHumanStateJump,.?AVCHumanStateJump@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f520,CHumanStateLadder,.?AVCHumanStateLadder@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f540,CHumanStateLedgeFoot,.?AVCHumanStateLedgeFoot@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f564,CHumanStateLedgeHang,.?AVCHumanStateLedgeHang@@,class,single,CHumanState@0 CCharacterState@0
+0x0043f588,CHumanStateLedgeHop,.?AVCHumanStateLedgeHop@@,class,single,CCharacterState@0
+0x0043f4fc,CHumanStateStagger,.?AVCHumanStateStagger@@,class,single,CCharacterState@0
+0x0043f65c,CHumanStateStand,.?AVCHumanStateStand@@,class,single,CCharacterStateStand@0 CCharacterState@0
+0x0044056c,CHumanStateSuperForceTrap,.?AVCHumanStateSuperForceTrap@@,class,single,CCharacterState@0
+0x004401a4,CHumanStateSuperForceVictim,.?AVCHumanStateSuperForceVictim@@,class,single,CCharacterState@0
+0x0043f5ac,CHumanStateSwim,.?AVCHumanStateSwim@@,class,single,CCharacterState@0
+0x0043f5cc,CHumanStateThrown,.?AVCHumanStateThrown@@,class,single,CHumanState@0 CCharacterState@0
+0x00427eb8,CImageViewer,.?AVCImageViewer@@,class,single,COverlay@0 CCallbackManager@0
+0x0043d60c,CInventory,.?AVCInventory@@,class,,
+0x0043d5c0,CInventory::InventoryItem,.?AVInventoryItem@CInventory@@,class,,
+0x0043fca8,CIonBlast,.?AVCIonBlast@@,class,virtual,CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x00426308,CJahCommandHandler,.?AVCJahCommandHandler@@,class,single,CCommandHandler@0
+0x0042625c,CKcbCommandHandler,.?AVCKcbCommandHandler@@,class,multiple,CCommandHandler@0 LPeriodic@48 ?$ListNode@VLPeriodic@@@52
+0x00425f34,CKcbCommandHandler::IKTest,.?AVIKTest@CKcbCommandHandler@@,class,single,LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x00425edc,CKevBox,.?AVCKevBox@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 RBox@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CBox@0 CPrimitive@0 LSaveRestore@0
+0x0042632c,CKeyBinder,.?AVCKeyBinder@@,class,single,EventHandler@0
+0x004280d0,CLECLogo,.?AVCLECLogo@@,class,single,COverlay@0 CCallbackManager@0
+0x004280e8,CLetterboxOverlay,.?AVCLetterboxOverlay@@,class,single,COverlay@0 CCallbackManager@0
+0x004277a4,CLight,.?AVCLight@@,class,single,
+0x004278c4,CLightMapMaterial,.?AVCLightMapMaterial@@,class,single,CMaterial@0 ?$ListNode@VCMaterial@@@4
+0x0043eae0,CLightning,.?AVCLightning@@,class,single,RLightning@0 RThickLine@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0042772c,CLightNode,.?AVCLightNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@4 CBSPTreeItem@12
+0x00427ff4,CLoadingOverlay,.?AVCLoadingOverlay@@,class,single,COverlay@0 CCallbackManager@0
+0x004277fc,CMaterial,.?AVCMaterial@@,class,single,?$ListNode@VCMaterial@@@4
+0x00428bd4,CMatrix,.?AVCMatrix@@,class,single,
+0x0043cae8,CMeleNode,.?AVCMeleNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x00427988,CMesh,.?AVCMesh@@,class,single,CPrimitive@0 LSaveRestore@0
+0x004279ec,CMesh::CMeshMaterialSet,.?AVCMeshMaterialSet@CMesh@@,class,single,LSaveRestore@0
+0x00427da4,CMessage,.?AVCMessage@@,class,single,
+0x004287fc,CMessageHandler,.?AVCMessageHandler@@,class,single,
+0x00428108,CMessageScreen,.?AVCMessageScreen@@,class,single,COverlay@0 CCallbackManager@0
+0x0043b3cc,CMessageServer,.?AVCMessageServer@@,class,single,CNetwork@0 CThread@0
+0x0043b37c,CMessageServer::RemoteMsgServerInfo,.?AVRemoteMsgServerInfo@CMessageServer@@,class,single,
+0x00426280,CMimCommandHandler,.?AVCMimCommandHandler@@,class,single,CCommandHandler@0
+0x0043ab30,CMoveRegion,.?AVCMoveRegion@@,class,single,CScriptCallback@0 CCallback@0
+0x004262a4,CMsmCommandHandler,.?AVCMsmCommandHandler@@,class,single,CCommandHandler@0
+0x0043e828,CMusicManager,.?AVCMusicManager@@,class,single,CCallback@0
+0x0043b2f0,CNetwork,.?AVCNetwork@@,class,,
+0x00428014,CNewObjectiveAlert,.?AVCNewObjectiveAlert@@,class,single,COverlay@0 CCallbackManager@0
+0x0042a694,CNodeBSPTree::BSPNode,.?AVBSPNode@CNodeBSPTree@@,class,,
+0x00428cf8,CNodeExtraInfo,.?AVCNodeExtraInfo@@,class,,
+0x0043ee3c,CNodeHash,.?AVCNodeHash@@,class,single,?$LHash2D@PAVCPathNode@@@0 ?$LArray2D@V?$LList@PAVCPathNode@@@@@0
+0x00426a54,CNodeInstanceData,.?AVCNodeInstanceData@@,class,single,
+0x0042a5b0,CNodeParticle,.?AVCNodeParticle@@,class,virtual,_CNode@0 ?$ListNode@VCNodeParticle@@@4
+0x00428c30,CNodeRef,.?AVCNodeRef@@,class,single,?$ListNode@VCNodeRef@@@4
+0x0042724c,CNodeRope,.?AVCNodeRope@@,class,virtual,_CNode@0 CPrimitive@0 LSaveRestore@0
+0x0042a898,CNodeSweptSphere,.?AVCNodeSweptSphere@@,class,virtual,_CNode@0 ?$ListNode@VCNodeSweptSphere@@@4
+0x00427958,COccluder,.?AVCOccluder@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x004271f8,COcclusionVolume,.?AVCOcclusionVolume@@,class,single,CClipVolume@0
+0x0042a99c,CompiledVertexArray,.?AVCompiledVertexArray@@,class,single,
+0x0042a1b0,CompoundCollPrimParser,.?AVCompoundCollPrimParser@@,class,single,LFormatParser@0
+0x00428474,ControlEvent,.?AVControlEvent@@,class,single,Event@0
+0x00428170,COpeningCrawl,.?AVCOpeningCrawl@@,class,single,COverlay@0 CCallbackManager@0
+0x00427e38,COptionsScreen,.?AVCOptionsScreen@@,class,single,COverlay@0 CCallbackManager@0
+0x00427ddc,COverlay,.?AVCOverlay@@,class,single,CCallbackManager@0
+0x0043ab4c,CPause,.?AVCPause@@,class,single,CScriptCallback@0 CCallback@0
+0x004282f0,CPCXFile,.?AVCPCXFile@@,class,single,
+0x00428128,CPDA,.?AVCPDA@@,class,single,COverlay@0 CCallbackManager@0
+0x0042a3c0,CPhysicsRegion,.?AVCPhysicsRegion@@,class,virtual,CRegion@0 CPrimitive@0 LSaveRestore@0 ?$ListNode@VCPhysicsRegion@@@4 CBSPTreeItem@12
+0x0042a200,CPhysNode,.?AVCPhysNode@@,class,virtual,_CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0042a63c,CPhysNode::OverlapRecord,.?AVOverlapRecord@CPhysNode@@,class,,
+0x0042a7e4,CPhysNodeAnimated,.?AVCPhysNodeAnimated@@,class,virtual,CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0042a408,CPhysNodeList,.?AVCPhysNodeList@@,class,single,?$LinkedList@VCPhysNode@@@4
+0x0042a804,CPhysNodePoint,.?AVCPhysNodePoint@@,class,virtual,CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0042a824,CPhysNodeQueryVol,.?AVCPhysNodeQueryVol@@,class,virtual,CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0042a378,CPhysNodeRef,.?AVCPhysNodeRef@@,class,single,CNodeRef@0 ?$ListNode@VCNodeRef@@@4
+0x0042a844,CPhysNodeRigidBody,.?AVCPhysNodeRigidBody@@,class,virtual,CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0042a218,CPhysNodeRope,.?AVCPhysNodeRope@@,class,virtual,CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CNodeRope@0 _CNode@0 CPrimitive@0 LSaveRestore@0 CCollisionPrim@0 CPrimitive@0 LSaveRestore@0
+0x00428d18,CPlane,.?AVCPlane@@,class,,
+0x0043fcc0,CPlasmaFlameEfx,.?AVCPlasmaFlameEfx@@,class,virtual,CSpriteEfx@0 CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x0043a290,CPolySet,.?AVCPolySet@@,class,single,
+0x004277bc,CPortal,.?AVCPortal@@,class,single,_CNode@0
+0x00425ea4,CPrimitive,.?AVCPrimitive@@,class,single,LSaveRestore@0
+0x0043a2a8,CPrimitiveParser,.?AVCPrimitiveParser@@,class,single,LFormatParser@0
+0x0043c590,CProjectile,.?AVCProjectile@@,class,virtual,CNodeParticle@0 _CNode@0 ?$ListNode@VCNodeParticle@@@4 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CLightNode@92 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@96 CBSPTreeItem@104 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043d400,CProximityClassifier,.?AVCProximityClassifier@@,class,virtual,CPhysNodeQueryVol@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CTanisNode@480 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x00427814,CRegion,.?AVCRegion@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0043ccbc,CRegionDsc,.?AVCRegionDsc@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0043f008,CRegionParser,.?AVCRegionParser@@,class,single,LFormatParser@0
+0x00427b84,CResourceContainer,.?AVCResourceContainer@@,class,single,?$ListNode@VCResourceContainer@@@4
+0x00427be4,CResourceContainer_Directory,.?AVCResourceContainer_Directory@@,class,single,CResourceContainer@0 ?$ListNode@VCResourceContainer@@@4
+0x0043c554,CRippleNode,.?AVCRippleNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 LPeriodic@112 ?$ListNode@VLPeriodic@@@116
+0x004262e4,CRmfCommandHandler,.?AVCRmfCommandHandler@@,class,multiple,EventHandler@0 CCommandHandler@12
+0x0043ecf8,CRPortal,.?AVCRPortal@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPortal@112 _CNode@0
+0x0042782c,CRRegion,.?AVCRRegion@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CRegion@0 CPrimitive@0 LSaveRestore@0 CBSPTreeItem@0
+0x00426fec,CRSpherePrim,.?AVCRSpherePrim@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CSpherePrim@0 CPrimitive@0 LSaveRestore@0
+0x00427844,CRWorld,.?AVCRWorld@@,class,single,
+0x0043fce0,CScorchMarkEfx,.?AVCScorchMarkEfx@@,class,virtual,CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60
+0x0043a8f4,CScript,.?AVCScript@@,class,single,CCallbackManager@0
+0x0043ab10,CScriptCallback,.?AVCScriptCallback@@,class,single,CCallback@0
+0x0043a5f8,CScriptCommandParser,.?AVCScriptCommandParser@@,class,single,LFormatParser@0
+0x0043a90c,CScriptFunction,.?AVCScriptFunction@@,class,single,CScript@0 CCallbackManager@0
+0x0043b1ac,CServer,.?AVCServer@@,class,multiple,CMessageHandler@0 CCommandHandler@16
+0x0043b158,CServer::CServerClient,.?AVCServerClient@CServer@@,class,single,
+0x0043ab64,CSetFarClip,.?AVCSetFarClip@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ab80,CSetGameSpeed,.?AVCSetGameSpeed@@,class,single,CScriptCallback@0 CCallback@0
+0x0043c570,CShortOutNode,.?AVCShortOutNode@@,class,virtual,RTimerNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043a56c,CSkeleton,.?AVCSkeleton@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0043a2c8,CSkeletonParser,.?AVCSkeletonParser@@,class,single,LFormatParser@0
+0x00427e58,CSniperScopeDisplay,.?AVCSniperScopeDisplay@@,class,single,COverlay@0 CCallbackManager@0
+0x0043edd0,CSpecialEffect,.?AVCSpecialEffect@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60
+0x004282b8,CSpecialEffectRef,.?AVCSpecialEffectRef@@,class,single,?$ListNode@VCSpecialEffectRef@@@4
+0x00426fd0,CSpherePrim,.?AVCSpherePrim@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0043efd0,CSplineParser,.?AVCSplineParser@@,class,single,LFormatParser@0
+0x0043ea7c,CSplineVector,.?AVCSplineVector@@,class,multiple,?$CBezSpline@VCVector@@@0 ?$CSpline@VCVector@@@0 LResource@28 ?$ListNode@VLResource@@@32
+0x0043b094,CSpring,.?AVCSpring@@,class,,
+0x0043fba0,CSpriteEfx,.?AVCSpriteEfx@@,class,virtual,CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x00428308,CState,.?AVCState@@,class,single,
+0x0043b3b0,CStateStack,.?AVCStateStack@@,class,single,
+0x00425dfc,CStimulusTemplate,.?AVCStimulusTemplate@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00428038,CSubtitles,.?AVCSubtitles@@,class,single,COverlay@0 CCallbackManager@0
+0x00425d0c,CSurface,.?AVCSurface@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0043baac,CSwingData,.?AVCSwingData@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00425d7c,CTAITemplate,.?AVCTAITemplate@@,class,virtual,LDescriptor@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x0043e730,CTAnimInst,.?AVCTAnimInst@@,class,multiple,AInst@0 CCallbackManager@104
+0x0043cdcc,CTanisAnimation,.?AVCTanisAnimation@@,class,multiple,Animation@0 LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@52
+0x0043c614,CTanisAnimNode,.?AVCTanisAnimNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ANode@16 _CNode@0
+0x0043ea98,CTanisBlobShadow,.?AVCTanisBlobShadow@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043e770,CTanisCamera,.?AVCTanisCamera@@,class,virtual,Camera@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CTanisNode@1588 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043c518,CTanisCharacterNode,.?AVCTanisCharacterNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 ANode@4 _CNode@0
+0x0043ca0c,CTanisCharacterNode_Point,.?AVCTanisCharacterNode_Point@@,class,virtual,CTanisCharacterNode@0 CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 ANode@4 _CNode@0 CTanisPointMassObjNode@140 CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodePoint@140 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043cb04,CTanisCharacterNode_RigidBody,.?AVCTanisCharacterNode_RigidBody@@,class,virtual,CTanisCharacterNode@0 CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 ANode@4 _CNode@0 CTanisRigidBodyObjNode@140 CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodeRigidBody@140 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x00428834,CTanisClient,.?AVCTanisClient@@,class,multiple,CClient@0 CMessageHandler@0 CCommandHandler@16 EventHandler@72 CConsoleDevice@84
+0x00428340,CTanisClientConnectToServer,.?AVCTanisClientConnectToServer@@,class,single,CTanisClientState@0 CState@0
+0x00428bac,CTanisClientFlashMovie,.?AVCTanisClientFlashMovie@@,class,multiple,CTanisClientState@0 CState@0 EventHandler@40
+0x004287c4,cTanisClientMulti,.?AVcTanisClientMulti@@,class,multiple,CTanisClientState@0 CState@0 EventHandler@40 CEntityRef@52 ?$ListNode@VCEntityRef@@@56 CCommandHandler@68
+0x004283bc,CTanisClientPlayer,.?AVCTanisClientPlayer@@,class,multiple,CTanisClientState@0 CState@0 EventHandler@40 CEntityRef@52 ?$ListNode@VCEntityRef@@@56 CCommandHandler@68
+0x00428320,CTanisClientState,.?AVCTanisClientState@@,class,single,CState@0
+0x00428394,CTanisClientState_Menu,.?AVCTanisClientState_Menu@@,class,multiple,CTanisClientState@0 CState@0 EventHandler@40
+0x0042836c,CTanisClientStateCutScene,.?AVCTanisClientStateCutScene@@,class,multiple,CTanisClientState@0 CState@0 EventHandler@40
+0x004287a0,CTanisClientViewer,.?AVCTanisClientViewer@@,class,multiple,CTanisClientState@0 CState@0 CCommandHandler@40 EventHandler@88
+0x00426348,CTanisConfigWindows,.?AVCTanisConfigWindows@@,class,single,LConfig@0
+0x0043dbd4,CTanisConsoleServices,.?AVCTanisConsoleServices@@,class,single,LConsoleServices@0
+0x0043dfa8,CTanisErrorReport,.?AVCTanisErrorReport@@,class,single,ErrorReportBaseClass@0
+0x0043d9d0,CTanisEventChannel,.?AVCTanisEventChannel@@,class,single,AChannel@0
+0x0043cac8,CTanisFistNode,.?AVCTanisFistNode@@,class,virtual,CMeleNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CNodeSweptSphere@88 _CNode@0 ?$ListNode@VCNodeSweptSphere@@@92
+0x00440854,CTanisFlashlight,.?AVCTanisFlashlight@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043c8f4,CTanisForceShieldNode,.?AVCTanisForceShieldNode@@,class,virtual,CTanisIntangibleNode@0 CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043fb38,CTanisGenericMeleNode,.?AVCTanisGenericMeleNode@@,class,virtual,CNodeSweptSphere@0 _CNode@0 ?$ListNode@VCNodeSweptSphere@@@4 CMeleNode@216 CTanisNode@216 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0042636c,CTanisGenNode,.?AVCTanisGenNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043c8a0,CTanisIntangibleNode,.?AVCTanisIntangibleNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043e1ec,CTanisKeyControlMapper,.?AVCTanisKeyControlMapper@@,class,single,KeyEventMapper@0 EventHandler@0
+0x0043ea08,CTanisLight,.?AVCTanisLight@@,class,virtual,CLightNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@4 CBSPTreeItem@12 CTanisNode@36 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043df84,CTanisMemoryProfiler,.?AVCTanisMemoryProfiler@@,class,single,MemoryProfilerBaseClass@0
+0x004263c8,CTanisMesh,.?AVCTanisMesh@@,class,virtual,CTanisPrim@4 RPrimitive@0 CPrimitive@0 LSaveRestore@0 LResource@0 ?$ListNode@VLResource@@@4 RMesh@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CMesh@0 CPrimitive@0 LSaveRestore@0
+0x0043dc14,CTanisMessageServer,.?AVCTanisMessageServer@@,class,single,CMessageServer@0 CNetwork@0 CThread@0
+0x0043cb90,CTanisMotionBlurNode,.?AVCTanisMotionBlurNode@@,class,virtual,RMotionBlurNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043de84,CTanisMouseControlMapper,.?AVCTanisMouseControlMapper@@,class,single,EventHandler@0
+0x0043c6e4,CTanisMovableObjNode,.?AVCTanisMovableObjNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodeAnimated@75 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043c740,CTanisMovablePointMassObjNode,.?AVCTanisMovablePointMassObjNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodePoint@75 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043a61c,CTanisNode,.?AVCTanisNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043c94c,CTanisNodeAnimatedObject,.?AVCTanisNodeAnimatedObject@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodeAnimated@75 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 ANode@79 _CNode@0
+0x0043c9ac,CTanisNodeProceduralCylinder,.?AVCTanisNodeProceduralCylinder@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RNodeRope@16 CNodeRope@0 _CNode@0 CPrimitive@0 LSaveRestore@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RPrimitive@16 CPrimitive@0 LSaveRestore@0
+0x0043c84c,CTanisNodeRopeObject,.?AVCTanisNodeRopeObject@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 RNodeRope@75 CNodeRope@0 _CNode@0 CPrimitive@0 LSaveRestore@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RPrimitive@75 CPrimitive@0 LSaveRestore@0 CPhysNodeRope@91 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CNodeRope@0 _CNode@0 CPrimitive@0 LSaveRestore@0 CCollisionPrim@91 CPrimitive@0 LSaveRestore@0
+0x0043f044,CTanisParticleSystem,.?AVCTanisParticleSystem@@,class,virtual,RParticleSystem@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VRParticleSystem@@@4 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043ae10,CTanisPeriodicRegion,.?AVCTanisPeriodicRegion@@,class,virtual,CTanisRegion@0 CRegion@0 CPrimitive@0 LSaveRestore@0 CRRegion@40 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CRegion@0 CPrimitive@0 LSaveRestore@0 CBSPTreeItem@40 CPhysicsRegion@0 CRegion@0 CPrimitive@0 LSaveRestore@0 ?$ListNode@VCPhysicsRegion@@@4 CBSPTreeItem@12 CCallbackManager@24 LPeriodic@200 ?$ListNode@VLPeriodic@@@204
+0x0043c4f8,CTanisPhysObjNode,.?AVCTanisPhysObjNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043c79c,CTanisPointMassObjNode,.?AVCTanisPointMassObjNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodePoint@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043e9ec,CTanisPrim,.?AVCTanisPrim@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 LResource@0 ?$ListNode@VLResource@@@4
+0x0043adf4,CTanisRegion,.?AVCTanisRegion@@,class,virtual,CRegion@0 CPrimitive@0 LSaveRestore@0 CRRegion@40 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CRegion@0 CPrimitive@0 LSaveRestore@0 CBSPTreeItem@40 CPhysicsRegion@0 CRegion@0 CPrimitive@0 LSaveRestore@0 ?$ListNode@VCPhysicsRegion@@@4 CBSPTreeItem@12 CCallbackManager@24
+0x00440924,CTanisResManager,.?AVCTanisResManager@@,class,multiple,LResourceManager@0 CCommandHandler@4 LPeriodic@52 ?$ListNode@VLPeriodic@@@56
+0x0043c7f4,CTanisRigidBodyObjNode,.?AVCTanisRigidBodyObjNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4 CPhysNodeRigidBody@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043dbf8,CTanisRumble,.?AVCTanisRumble@@,class,single,LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x0043cb30,CTanisSaberBlade,.?AVCTanisSaberBlade@@,class,virtual,CMeleNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CNodeSweptSphere@88 _CNode@0 ?$ListNode@VCNodeSweptSphere@@@92 LPeriodic@304 ?$ListNode@VLPeriodic@@@308
+0x0043eab8,CTanisSelectionPointer,.?AVCTanisSelectionPointer@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043b1c4,CTanisServer,.?AVCTanisServer@@,class,multiple,CServer@0 CMessageHandler@0 CCommandHandler@16 CCallbackManager@84
+0x0043b17c,CTanisServer::CTanisServerClient,.?AVCTanisServerClient@CTanisServer@@,class,single,CServer::CServerClient@0
+0x0043aed4,CTanisServerClientState,.?AVCTanisServerClientState@@,class,single,CState@0
+0x0043af74,CTanisServerClientState_Idle,.?AVCTanisServerClientState_Idle@@,class,single,CTanisServerClientState@0 CState@0
+0x0043aefc,CTanisServerClientState_Null,.?AVCTanisServerClientState_Null@@,class,single,CTanisServerClientState@0 CState@0
+0x0043afa0,CTanisServerClientState_Player,.?AVCTanisServerClientState_Player@@,class,single,CTanisServerClientState@0 CState@0
+0x0043afd0,CTanisServerClientState_Spectator,.?AVCTanisServerClientState_Spectator@@,class,single,CTanisServerClientState@0 CState@0
+0x0043b210,CTanisServerLoadWorld,.?AVCTanisServerLoadWorld@@,class,single,CTanisServerState@0 CState@0
+0x0043af2c,CTanisServerState,.?AVCTanisServerState@@,class,single,CState@0
+0x0043af4c,CTanisServerUnloadWorld,.?AVCTanisServerUnloadWorld@@,class,single,CTanisServerState@0 CState@0
+0x0043d314,CTanisSkeleton,.?AVCTanisSkeleton@@,class,virtual,CTanisPrim@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 LResource@0 ?$ListNode@VLResource@@@4 CSkeleton@0 CPrimitive@0 LSaveRestore@0
+0x0044026c,CTanisSkeletonParser,.?AVCTanisSkeletonParser@@,class,single,LFormatParser@0
+0x0043e668,CTanisSound,.?AVCTanisSound@@,class,multiple,CCallbackManager@0 ?$ListNode@VCTanisSound@@@16
+0x0043dfc8,CTanisSoundBundle,.?AVCTanisSoundBundle@@,class,single,SoundBundleBaseClass@0
+0x0043df5c,CTanisSoundProgressBar,.?AVCTanisSoundProgressBar@@,class,single,AudioProgressBar@0
+0x00440440,CTanisSpritePointSystem,.?AVCTanisSpritePointSystem@@,class,virtual,RSpritePointSystem@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VRSpritePointSystem@@@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x0043c690,CTanisStaticObjNode,.?AVCTanisStaticObjNode@@,class,virtual,CTanisPhysObjNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CPhysNode@0 _CNode@0 ?$ListNode@VCPhysNode@@@4
+0x0043e7e0,CTanisSystem,.?AVCTanisSystem@@,class,multiple,EventHandler@0 CCommandHandler@12
+0x0043ed30,CTanisTlitParser,.?AVCTanisTlitParser@@,class,single,LFormatParser@0
+0x0043eec4,CTanisWorld,.?AVCTanisWorld@@,class,multiple,CCommandHandler@0 CRWorld@48 CMessageHandler@276
+0x004263ac,CTanisZone,.?AVCTanisZone@@,class,virtual,CTanisMesh@0 CTanisPrim@4 RPrimitive@0 CPrimitive@0 LSaveRestore@0 LResource@0 ?$ListNode@VLResource@@@4 RMesh@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CMesh@0 CPrimitive@0 LSaveRestore@0 RZone@8 CZone@0 CMesh@0 CPrimitive@0 LSaveRestore@0 RMesh@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CMesh@0 CPrimitive@0 LSaveRestore@0 CCollZone@56 CCollisionPrim@0 CPrimitive@0 LSaveRestore@0 CZone@0 CMesh@0 CPrimitive@0 LSaveRestore@0
+0x0043cb50,CTanisZoneNode,.?AVCTanisZoneNode@@,class,virtual,CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RZoneNode@16 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CBSPTreeItem@20 CPhysNode@100 _CNode@0 ?$ListNode@VCPhysNode@@@104
+0x0043ed10,CTanisZoneParser,.?AVCTanisZoneParser@@,class,single,LFormatParser@0
+0x004287e4,CTextMenu,.?AVCTextMenu@@,class,single,CTextMenuElement@0
+0x0042870c,CTextMenu_Command,.?AVCTextMenu_Command@@,class,single,CTextMenuElement@0
+0x004285d0,CTextMenu_CVar,.?AVCTextMenu_CVar@@,class,single,CTextMenuElement@0
+0x0042872c,CTextMenu_GotoStart,.?AVCTextMenu_GotoStart@@,class,single,CTextMenuElement@0
+0x004285b0,CTextMenuElement,.?AVCTextMenuElement@@,class,,
+0x00428054,CTextMessagesDisplay,.?AVCTextMessagesDisplay@@,class,single,COverlay@0 CCallbackManager@0
+0x0042818c,CTextOverlay,.?AVCTextOverlay@@,class,single,COverlay@0 CCallbackManager@0
+0x004263e4,CTexture,.?AVCTexture@@,class,single,?$ListNode@VCTexture@@@4
+0x004282d8,CTGAFile,.?AVCTGAFile@@,class,single,
+0x0043f0b4,CTGenNodeEffect,.?AVCTGenNodeEffect@@,class,virtual,CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043f1f4,CTGenNodeEnergyBeam,.?AVCTGenNodeEnergyBeam@@,class,virtual,CTGenNodeEffect@0 CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043f100,CTGenNodeEntity,.?AVCTGenNodeEntity@@,class,virtual,CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043f1d0,CTGenNodeLightning,.?AVCTGenNodeLightning@@,class,virtual,CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043f150,CTGenNodeParticleSys,.?AVCTGenNodeParticleSys@@,class,virtual,CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52 LPeriodic@268 ?$ListNode@VLPeriodic@@@272
+0x00426388,CTGenNodeSpritePoints,.?AVCTGenNodeSpritePoints@@,class,virtual,CTanisGenNode@0 CTanisNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@16 CMessageHandler@16 ?$ListNode@VCTanisGenNode@@@52
+0x0043b2d8,CThread,.?AVCThread@@,class,single,
+0x0043a87c,CTimer,.?AVCTimer@@,class,single,?$CDataBaseValue@M@0 CDataBaseValueBase@0 CCallbackManager@0
+0x00428078,CTrainingInfo,.?AVCTrainingInfo@@,class,single,COverlay@0 CCallbackManager@0
+0x00428094,CUnlockedScreen,.?AVCUnlockedScreen@@,class,single,COverlay@0 CCallbackManager@0
+0x00426a74,CVertexArray,.?AVCVertexArray@@,class,single,CPrimitive@0 LSaveRestore@0
+0x00427e7c,CVictoryScreen,.?AVCVictoryScreen@@,class,single,COverlay@0 CCallbackManager@0
+0x0043fc4c,CVolumetricExplosion,.?AVCVolumetricExplosion@@,class,virtual,CSpecialEffect@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CTanisNode@8 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CWorldObject@24 CMessageHandler@24 ?$ListNode@VCSpecialEffect@@@60 LPeriodic@168 ?$ListNode@VLPeriodic@@@172
+0x0043ab9c,CWaitForAll,.?AVCWaitForAll@@,class,single,CScriptCallback@0 CCallback@0
+0x0043abb8,CWaitForCallback,.?AVCWaitForCallback@@,class,single,CScriptCallback@0 CCallback@0
+0x0043abd8,CWaitForCallbackWithInfo,.?AVCWaitForCallbackWithInfo@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ac00,CWaitUntilAnimationEnds,.?AVCWaitUntilAnimationEnds@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ac28,CWaitUntilCreatedDamageReplacement,.?AVCWaitUntilCreatedDamageReplacement@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ac5c,CWaitUntilFarFromEntity,.?AVCWaitUntilFarFromEntity@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ac84,CWaitUntilFarFromPosition,.?AVCWaitUntilFarFromPosition@@,class,single,CScriptCallback@0 CCallback@0
+0x0043acac,CWaitUntilGenerated,.?AVCWaitUntilGenerated@@,class,single,CScriptCallback@0 CCallback@0
+0x0043acd0,CWaitUntilGreaterThan,.?AVCWaitUntilGreaterThan@@,class,single,CScriptCallback@0 CCallback@0
+0x0043acf4,CWaitUntilLessThan,.?AVCWaitUntilLessThan@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ad38,CWaitUntilNearEntity,.?AVCWaitUntilNearEntity@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ad5c,CWaitUntilNearPosition,.?AVCWaitUntilNearPosition@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ad84,CWaitUntilNotBeingRendered,.?AVCWaitUntilNotBeingRendered@@,class,single,CScriptCallback@0 CCallback@0
+0x0043adb0,CWaitUntilRemoved,.?AVCWaitUntilRemoved@@,class,single,CScriptCallback@0 CCallback@0
+0x0043add0,CWaitUntilSaidLine,.?AVCWaitUntilSaidLine@@,class,single,CScriptCallback@0 CCallback@0
+0x0043ad18,CWaitUntilSees,.?AVCWaitUntilSees@@,class,single,CScriptCallback@0 CCallback@0
+0x0043a520,CWeightMap,.?AVCWeightMap@@,class,single,CPrimitive@0 LSaveRestore@0
+0x0043da4c,CWorldObject,.?AVCWorldObject@@,class,single,CMessageHandler@0
+0x0043efec,CWorldParser,.?AVCWorldParser@@,class,single,LFormatParser@0
+0x0042799c,CZone,.?AVCZone@@,class,single,CMesh@0 CPrimitive@0 LSaveRestore@0
+0x0043a494,CZone::CZoneBSPNode,.?AVCZoneBSPNode@CZone@@,class,,
+0x0042a9d0,D3DCompiledVertexArray,.?AVD3DCompiledVertexArray@@,class,single,CompiledVertexArray@0
+0x0043d44c,EntityNodeInfo,.?AVEntityNodeInfo@@,class,,
+0x0043dd08,ErrorReportBaseClass,.?AVErrorReportBaseClass@@,class,,
+0x00428254,Event,.?AVEvent@@,class,single,
+0x00428fa0,EventGenerator,.?AVEventGenerator@@,class,single,
+0x004262c8,EventHandler,.?AVEventHandler@@,class,single,
+0x004260e4,exception,.?AVexception@@,class,,
+0x00428fe0,GamepadEvent,.?AVGamepadEvent@@,class,single,Event@0
+0x0043e6a8,IndexPan,.?AVIndexPan@@,class,single,SoundInterfaceIndexBaseClass@0 AudioIndexBaseClass@4
+0x0043e6e4,IndexPos,.?AVIndexPos@@,class,single,SoundInterfaceIndexBaseClass@0 AudioIndexBaseClass@4
+0x00428ffc,KeyEvent,.?AVKeyEvent@@,class,single,Event@0
+0x00428fc0,KeyEventMapper,.?AVKeyEventMapper@@,class,single,EventHandler@0
+0x0042845c,LABitmap,.?AVLABitmap@@,class,single,LBitmap@0 LResource@0 ?$ListNode@VLResource@@@4
+0x00429f64,LBitmap,.?AVLBitmap@@,class,single,LResource@0 ?$ListNode@VLResource@@@4
+0x00429e54,LColorFormat,.?AVLColorFormat@@,class,single,
+0x00426134,LConfig,.?AVLConfig@@,class,single,
+0x00429e70,LConsoleServices,.?AVLConsoleServices@@,class,single,
+0x0042605c,LCVarBase,.?AVLCVarBase@@,class,single,?$ListNode@VLCVarBase@@@4
+0x00429f90,LDescriptor,.?AVLDescriptor@@,class,virtual,LResource@0 ?$ListNode@VLResource@@@4 LSaveRestore@0
+0x00429f7c,LFile,.?AVLFile@@,class,single,
+0x00427ba8,LFileServices,.?AVLFileServices@@,class,single,
+0x00426b80,LFormatParser,.?AVLFormatParser@@,class,single,
+0x00429f1c,LMemoryServices,.?AVLMemoryServices@@,class,single,ThreadBase@4
+0x00425f1c,LPeriodic,.?AVLPeriodic@@,class,single,?$ListNode@VLPeriodic@@@4
+0x00426fb8,LPoolBase,.?AVLPoolBase@@,class,single,?$ListNode@VLPoolBase@@@4
+0x00425cf4,LResource,.?AVLResource@@,class,single,?$ListNode@VLResource@@@4
+0x00429e14,LResourceManager,.?AVLResourceManager@@,class,single,
+0x00425e88,LSaveRestore,.?AVLSaveRestore@@,class,single,
+0x00429e34,LSimpleResManager,.?AVLSimpleResManager@@,class,single,LResourceManager@0
+0x00429eb8,LSimulation_Index,.?AVLSimulation_Index@@,class,single,
+0x00429e90,LTimeServices,.?AVLTimeServices@@,class,single,
+0x004293a4,LTokenHandler,.?AVLTokenHandler@@,class,,
+0x004293ec,LTokenHandlerTable,.?AVLTokenHandlerTable@@,class,single,
+0x00425b58,LVariant,.?AVLVariant@@,class,single,
+0x0043dce0,MemoryProfilerBaseClass,.?AVMemoryProfilerBaseClass@@,class,,
+0x0042907c,MouseEvent,.?AVMouseEvent@@,class,single,Event@0
+0x00425e74,RBox,.?AVRBox@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CBox@0 CPrimitive@0 LSaveRestore@0
+0x0043e214,RDebugLinesPrim,.?AVRDebugLinesPrim@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x004270a8,RDiamond,.?AVRDiamond@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CDiamond@0 CPrimitive@0 LSaveRestore@0
+0x00426b4c,RDynMesh,.?AVRDynMesh@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CDynMesh@0 CPrimitive@0 LSaveRestore@0
+0x00426b64,RFaceFragment,.?AVRFaceFragment@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043c53c,RFlash,.?AVRFlash@@,class,virtual,CLightNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@4 CBSPTreeItem@12 RTimerNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x00427074,RForceShield,.?AVRForceShield@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CForceShield@0 CPrimitive@0 LSaveRestore@0
+0x0043eb40,RGlowMark,.?AVRGlowMark@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 ?$ListNode@VRGlowMark@@@0
+0x0043eb58,RHalo,.?AVRHalo@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x00427218,RLaserBolt,.?AVRLaserBolt@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x00427924,RLightning,.?AVRLightning@@,class,single,RThickLine@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x00427974,RMesh,.?AVRMesh@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 CMesh@0 CPrimitive@0 LSaveRestore@0
+0x00427a14,RMesh::CRMeshMaterialSet,.?AVCRMeshMaterialSet@RMesh@@,class,single,CMesh::CMeshMaterialSet@0 LSaveRestore@0
+0x00426c28,RMiscNodeInstanceData,.?AVRMiscNodeInstanceData@@,class,single,CNodeInstanceData@0
+0x0043cb70,RMotionBlurNode,.?AVRMotionBlurNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x0043eb70,RMuzzleFlash,.?AVRMuzzleFlash@@,class,virtual,RPrimitive@0 CPrimitive@0 LSaveRestore@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x00426bf8,RNode,.?AVRNode@@,class,virtual,?$ListNode@VRNode@@@4 _CNode@0
+0x00427264,RNodeRope,.?AVRNodeRope@@,class,virtual,CNodeRope@0 _CNode@0 CPrimitive@0 LSaveRestore@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x004272cc,RParticle,.?AVRParticle@@,class,,
+0x00426aec,RParticleGenerator,.?AVRParticleGenerator@@,class,single,
+0x00427008,RParticleGeneratorGeneric,.?AVRParticleGeneratorGeneric@@,class,single,RParticleGenerator@0
+0x00426acc,RParticleMover,.?AVRParticleMover@@,class,single,
+0x00426b10,RParticleMoverGeneric,.?AVRParticleMoverGeneric@@,class,single,RParticleMover@0
+0x00427034,RParticleMoverSmoke,.?AVRParticleMoverSmoke@@,class,single,RParticleMoverGeneric@0 RParticleMover@0
+0x00426aac,RParticleRenderer,.?AVRParticleRenderer@@,class,single,
+0x004273a8,RParticleRendererAnimated,.?AVRParticleRendererAnimated@@,class,single,RParticleRendererGeneric@0 RParticleRenderer@0
+0x0042734c,RParticleRendererGeneric,.?AVRParticleRendererGeneric@@,class,single,RParticleRenderer@0
+0x00427888,RParticleSystem,.?AVRParticleSystem@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VRParticleSystem@@@4
+0x00427460,RParticleSystemGeneric,.?AVRParticleSystemGeneric@@,class,,
+0x00425ec0,RPrimitive,.?AVRPrimitive@@,class,single,CPrimitive@0 LSaveRestore@0
+0x00427234,RSaber,.?AVRSaber@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0043eafc,RScorchMark,.?AVRScorchMark@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x0044041c,RSpritePointSystem,.?AVRSpritePointSystem@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VRSpritePointSystem@@@0
+0x00426c4c,RTextureAnimationInstanceData,.?AVRTextureAnimationInstanceData@@,class,single,CNodeInstanceData@0
+0x00427748,RThickLine,.?AVRThickLine@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x00426c0c,RTimerNode,.?AVRTimerNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 LPeriodic@0 ?$ListNode@VLPeriodic@@@4
+0x00426c78,RVertexLightingInstanceData,.?AVRVertexLightingInstanceData@@,class,single,CNodeInstanceData@0
+0x0043ea64,RWater,.?AVRWater@@,class,single,RPrimitive@0 CPrimitive@0 LSaveRestore@0
+0x00427940,RWave2D,.?AVRWave2D@@,class,virtual,RDynMesh@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CDynMesh@0 CPrimitive@0 LSaveRestore@0
+0x004279b0,RZone,.?AVRZone@@,class,virtual,CZone@0 CMesh@0 CPrimitive@0 LSaveRestore@0 RMesh@0 RPrimitive@0 CPrimitive@0 LSaveRestore@0 CMesh@0 CPrimitive@0 LSaveRestore@0
+0x004278e8,RZoneNode,.?AVRZoneNode@@,class,virtual,RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 CBSPTreeItem@4
+0x0043fc08,SFXCLight,.?AVSFXCLight@@,class,single,CLight@0
+0x0043fb60,SFXTanisLight,.?AVSFXTanisLight@@,class,virtual,CTanisLight@0 CLightNode@0 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0 ?$ListNode@VCLightNode@@@4 CBSPTreeItem@12 CTanisNode@36 RNode@0 ?$ListNode@VRNode@@@4 _CNode@0
+0x004271b4,SimplePolygon,.?AVSimplePolygon@@,class,single,?$LDArray@VCVector@@@0 ?$LArray@VCVector@@@0
+0x0043dd2c,SoundBundleBaseClass,.?AVSoundBundleBaseClass@@,class,,
+0x0043e1c0,SoundInterfaceIndexBaseClass,.?AVSoundInterfaceIndexBaseClass@@,class,,
+0x0043d934,StateMem,.?AUStateMem@@,struct,,
+0x00425b3c,std::ios_base,.?AVios_base@std@@,class,single,?$_Iosb@H@std@4
+0x00440a64,std::ios_base::failure,.?AVfailure@ios_base@std@@,class,,
+0x0042616c,std::length_error,.?AVlength_error@std@@,class,single,std::logic_error@0 exception@0
+0x00425b00,std::locale::facet,.?AVfacet@locale@std@@,class,single,
+0x00426114,std::logic_error,.?AVlogic_error@std@@,class,single,exception@0
+0x0042618c,std::out_of_range,.?AVout_of_range@std@@,class,single,std::logic_error@0 exception@0
+0x00440a44,std::runtime_error,.?AVruntime_error@std@@,class,,
+0x004260c8,std::strstream,.?AVstrstream@std@@,class,virtual,?$basic_iostream@DU?$char_traits@D@std@@@std@0 ?$basic_istream@DU?$char_traits@D@std@@@std@0 ?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4 ?$basic_ostream@DU?$char_traits@D@std@@@std@8 ?$basic_ios@DU?$char_traits@D@std@@@std@0 std::ios_base@0 ?$_Iosb@H@std@4
+0x004260a8,std::strstreambuf,.?AVstrstreambuf@std@@,class,single,?$basic_streambuf@DU?$char_traits@D@std@@@std@0
+0x0043bba4,TAI,.?AVTAI@@,class,single,?$ListNode@VTAI@@@4
+0x0043b554,TAIGoal,.?AVTAIGoal@@,class,single,
+0x0043c114,TAIGoal_DoAcrobatic,.?AVTAIGoal_DoAcrobatic@@,class,single,TAIGoal@0
+0x0043c334,TAIGoal_DoRoll,.?AVTAIGoal_DoRoll@@,class,single,TAIGoal@0
+0x0043c1d4,TAIGoal_DoWorkEvent,.?AVTAIGoal_DoWorkEvent@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b99c,TAIGoal_Follow,.?AVTAIGoal_Follow@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b9bc,TAIGoal_FollowLink,.?AVTAIGoal_FollowLink@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b9e0,TAIGoal_GotoNode,.?AVTAIGoal_GotoNode@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043ba00,TAIGoal_GotoPos,.?AVTAIGoal_GotoPos@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043ba20,TAIGoal_HideBehind,.?AVTAIGoal_HideBehind@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043bb08,TAIGoal_HitDoorSwitch,.?AVTAIGoal_HitDoorSwitch@@,class,multiple,TAIGoal_HitSwitch@0 TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043bb2c,TAIGoal_HitElevatorCallSwitch,.?AVTAIGoal_HitElevatorCallSwitch@@,class,multiple,TAIGoal_HitSwitch@0 TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043bb58,TAIGoal_HitElevatorSwitch,.?AVTAIGoal_HitElevatorSwitch@@,class,multiple,TAIGoal_HitSwitch@0 TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043ba44,TAIGoal_HitSwitch,.?AVTAIGoal_HitSwitch@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b6cc,TAIGoal_PlayAnimation,.?AVTAIGoal_PlayAnimation@@,class,single,TAIGoal@0
+0x0043ba64,TAIGoal_RideElevator,.?AVTAIGoal_RideElevator@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b6f0,TAIGoal_Scripted,.?AVTAIGoal_Scripted@@,class,single,TAIGoal@0
+0x0043ba88,TAIGoal_ThroughDoor,.?AVTAIGoal_ThroughDoor@@,class,multiple,TAIMultiGoal@0 TAIGoal@0 TAIGoalStack@12
+0x0043b56c,TAIGoal_TurnTo,.?AVTAIGoal_TurnTo@@,class,single,TAIGoal@0
+0x0043b664,TAIGoal_TurnToEntity,.?AVTAIGoal_TurnToEntity@@,class,single,TAIGoal@0
+0x0043b58c,TAIGoal_Wait,.?AVTAIGoal_Wait@@,class,single,TAIGoal@0
+0x0043b688,TAIGoal_WaitForGestures,.?AVTAIGoal_WaitForGestures@@,class,single,TAIGoal@0
+0x0043b774,TAIGoalStack,.?AVTAIGoalStack@@,class,single,
+0x0043b6b0,TAIMultiGoal,.?AVTAIMultiGoal@@,class,multiple,TAIGoal@0 TAIGoalStack@12
+0x0043b790,TAIState,.?AVTAIState@@,class,single,TAIGoalStack@0
+0x0043b7a8,TAIState_Attack_RemoteGun,.?AVTAIState_Attack_RemoteGun@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043bffc,TAIState_AttackNew,.?AVTAIState_AttackNew@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043bbb8,TAIState_BeHostage,.?AVTAIState_BeHostage@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b8d0,TAIState_Command,.?AVTAIState_Command@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043bac8,TAIState_FollowPlayer,.?AVTAIState_FollowPlayer@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b7d0,TAIState_GotoTag,.?AVTAIState_GotoTag@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b7f0,TAIState_Guard,.?AVTAIState_Guard@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b810,TAIState_HideBehind,.?AVTAIState_HideBehind@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b834,TAIState_Idle,.?AVTAIState_Idle@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b978,TAIState_Investigate,.?AVTAIState_Investigate@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b850,TAIState_Nudged,.?AVTAIState_Nudged@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b870,TAIState_Patrol,.?AVTAIState_Patrol@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b890,TAIState_Puppet,.?AVTAIState_Puppet@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b8b0,TAIState_Retreat,.?AVTAIState_Retreat@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b8f0,TAIState_TakeHostage,.?AVTAIState_TakeHostage@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b914,TAIState_Taunt,.?AVTAIState_Taunt@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b934,TAIState_UberGenDest,.?AVTAIState_UberGenDest@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043b958,TAIState_Wander,.?AVTAIState_Wander@@,class,single,TAIState@0 TAIGoalStack@0
+0x0043baec,TAIState_Work,.?AVTAIState_Work@@,class,single,TAIState@0 TAIGoalStack@0
+0x00429f00,ThreadBase,.?AVThreadBase@@,class,,
+0x00429014,XBoxGenerator,.?AVXBoxGenerator@@,class,single,EventGenerator@0
