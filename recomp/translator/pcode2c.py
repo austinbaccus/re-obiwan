@@ -292,15 +292,20 @@ class FunctionTranslator:
                     base = obj.getUnsignedValue()
         if base is None or '*0x4' not in str(ins):
             return []
-        lo, hi = self.entry - 0x100, self.entry + 0x8000
-        out = []
-        for n in range(256):
+        body = self.func.getBody()
+        lo = min(self.entry, body.getMinAddress().getOffset()) - 0x1000
+        hi = max(self.entry + 0x8000, body.getMaxAddress().getOffset() + 0x1000)
+        out, misses = [], 0
+        for n in range(1024):
             try:
                 v = memory.getInt(self.space_.getAddress(base + 4 * n)) & 0xFFFFFFFF
             except Exception:  # noqa: BLE001
                 break
             if not (lo <= v < hi):
-                break
+                misses += 1
+                if misses > 2:
+                    break
+                continue
             out.append(self.space_.getAddress(v))
         if out:
             self.features['jumptable_read'] += 1
@@ -608,9 +613,13 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         if fm.getFunctionAt(addr) is not None:
             return False
         if listing.getInstructionAt(addr) is None:
-            cu = listing.getCodeUnitAt(addr)
-            if cu is None or listing.getDefinedDataContaining(addr) is not None or listing.getInstructionContaining(addr) is not None:
-                return False
+            if listing.getDefinedDataContaining(addr) is not None:
+                return False  # jump tables and other data stay untouched
+            inside = listing.getInstructionContaining(addr)
+            if inside is not None:
+                # a pointer into the middle of an instruction means Ghidra decoded
+                # from the wrong byte: clear just that instruction and redo it
+                listing.clearCodeUnits(inside.getMinAddress(), inside.getMaxAddress(), False)
             DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
             if listing.getInstructionAt(addr) is None:
                 return False
