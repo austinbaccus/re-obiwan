@@ -5,6 +5,41 @@
 #include "guest.h"
 
 uintptr_t g_membase;
+const uint8_t g_zero16[16];
+
+static int16_t sat16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v; }
+
+void rt_pmaddwd(void *o, const void *a, const void *b) {
+    int16_t x[4], y[4]; int32_t r[2];
+    memcpy(x, a, 8); memcpy(y, b, 8);
+    r[0] = x[0] * y[0] + x[1] * y[1];
+    r[1] = x[2] * y[2] + x[3] * y[3];
+    memcpy(o, r, 8);
+}
+void rt_psubsw(void *o, const void *a, const void *b) {
+    int16_t x[4], y[4], r[4];
+    memcpy(x, a, 8); memcpy(y, b, 8);
+    for (int i = 0; i < 4; i++) r[i] = sat16(x[i] - y[i]);
+    memcpy(o, r, 8);
+}
+void rt_packssdw(void *o, const void *a, const void *b) {
+    int32_t x[2], y[2]; int16_t r[4];
+    memcpy(x, a, 8); memcpy(y, b, 8);
+    r[0] = sat16(x[0]); r[1] = sat16(x[1]); r[2] = sat16(y[0]); r[3] = sat16(y[1]);
+    memcpy(o, r, 8);
+}
+void rt_psllw(void *o, const void *a, const void *count) {
+    uint16_t x[4]; uint64_t c;
+    memcpy(x, a, 8); memcpy(&c, count, 8);
+    for (int i = 0; i < 4; i++) x[i] = c > 15 ? 0 : (uint16_t)(x[i] << c);
+    memcpy(o, x, 8);
+}
+void rt_pshufw(void *o, const void *a, int imm) {
+    uint16_t x[4], r[4];
+    memcpy(x, a, 8);
+    for (int i = 0; i < 4; i++) r[i] = x[(imm >> (2 * i)) & 3];
+    memcpy(o, r, 8);
+}
 
 double f80_to_f64(const uint8_t *p) {
     uint64_t mant;

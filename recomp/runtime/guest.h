@@ -28,6 +28,7 @@ typedef enum {
     TRAP_MISSING_FUNCTION, /* call or jump to code that was not recompiled */
     TRAP_INTERRUPT,        /* int3 / int n (QA-build asserts) */
     TRAP_DIVIDE,           /* divide by zero or quotient overflow */
+    TRAP_UNSUPPORTED,      /* instruction with no host equivalent (port I/O, cpuid) */
 } TrapKind;
 
 typedef struct Ctx {
@@ -103,6 +104,18 @@ DEF_F2I(16, int16_t, INT16_MIN, INT16_MAX)
 DEF_F2I(32, int32_t, INT32_MIN, INT32_MAX)
 DEF_F2I(64, int64_t, INT64_MIN, INT64_MAX)
 static inline uint8_t f2i8(double v) { return (uint8_t)f2i16(v); }
+
+extern const uint8_t g_zero16[16];
+static inline void wide_and(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] & ((const uint8_t *)b)[i]; }
+static inline void wide_or(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] | ((const uint8_t *)b)[i]; }
+static inline void wide_xor(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] ^ ((const uint8_t *)b)[i]; }
+
+/* MMX helpers: 64-bit packed integers */
+void rt_pmaddwd(void *o, const void *a, const void *b);
+void rt_psubsw(void *o, const void *a, const void *b);
+void rt_packssdw(void *o, const void *a, const void *b);
+void rt_psllw(void *o, const void *a, const void *count);
+void rt_pshufw(void *o, const void *a, int imm);
 
 double rt_fpatan(double y, double x);
 double rt_f2xm1(double x);

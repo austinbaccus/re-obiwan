@@ -33,7 +33,7 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     add_executable(difftest tests/loader.c)
     target_compile_options(difftest PRIVATE /GS- /O1)
     target_link_options(difftest PRIVATE /BASE:0x10000 /FIXED /DYNAMICBASE:NO /NODEFAULTLIB
-        /ENTRY:loader_start /SUBSYSTEM:CONSOLE /STACK:0x800000 /SAFESEH:NO /OPT:NOREF)
+        /ENTRY:loader_start /SUBSYSTEM:CONSOLE /STACK:0x4000000 /SAFESEH:NO /OPT:NOREF)
     set_target_properties(difftest PROPERTIES LINK_LIBRARIES kernel32)
     add_dependencies(difftest difftest_core)
 endif()

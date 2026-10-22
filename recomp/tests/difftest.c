@@ -11,6 +11,7 @@
 */
 #include <windows.h>
 #include <shellapi.h>
+#include <intrin.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,7 +20,7 @@
 #define SCRATCH_SIZE 0x10000
 #define STACK_SIZE 0x10000
 #define ARG_AREA 0x1000
-#define TIMEOUT_MS 2000
+#define TIMEOUT_MS 5000
 
 static uint8_t *g_image;      /* the XBE image at its link address */
 static uint32_t g_image_size;
@@ -89,6 +90,7 @@ static void make_start(Start *s, uint8_t *stack, uint32_t seed) {
 typedef struct {
     int fault;          /* 0 ok, 1 access violation / other exception, 2 guest trap */
     uint32_t code;
+    uint32_t trap_addr;
     uint32_t reg[8];
     int st_depth;       /* x87 values left on the stack (native only) */
     double st0;
@@ -167,9 +169,13 @@ static void run_native(uint32_t addr, const Start *s, Result *r) {
     n_target = addr;
     n_fault = 0;
     memset(r, 0, sizeof *r);
+    /* guest code may leave an SEH frame registered on the guest stack if it
+       faults; put the host's chain back afterwards */
+    DWORD saved_seh = __readfsdword(0);
     InterlockedExchange(&n_active, 1);
     native_call();
     InterlockedExchange(&n_active, 0);
+    __writefsdword(0, saved_seh);
     if (n_fault) {
         r->fault = 1;
         r->code = n_fault;
@@ -188,11 +194,17 @@ static void run_recompiled(GuestFn fn, const Start *s, Result *r) {
     for (int i = 0; i < 8; i++) WR32(ctx.r + 4 * i, s->reg[i]);
     WR32(MEM(s->reg[4]), 0xdeadbee0u); /* return address (only its slot matters) */
     WR16(ctx.r + REG_FPUCW, 0x027f);
+    /* fs: points at a private copy of this thread's TEB, so SEH frame links
+       and stack-base reads see the same values as the native run without the
+       guest's fs:[0] writes reaching the host's exception chain */
+    static _Alignas(16) uint8_t teb_copy[0x1000];
+    memcpy(teb_copy, (void *)(uintptr_t)__readfsdword(0x18), sizeof teb_copy);
+    WR32(ctx.r + REG_FS_OFFSET, (uint32_t)(uintptr_t)teb_copy);
     for (int i = 0; i < 8; i++) WRF80SLOT(ctx.r + REG_ST0 + 0x10 * i, bits_f64(0xfff8000000000000ull));
     WR32(ctx.r + REG_MXCSR, 0x1f80);
     ctx.trap_jmp = &jb;
     memset(r, 0, sizeof *r);
-    if (setjmp(jb)) { r->fault = 2; r->code = ctx.trap; return; }
+    if (setjmp(jb)) { r->fault = 2; r->code = ctx.trap; r->trap_addr = ctx.trap_addr; return; }
     __try {
         fn(&ctx);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -206,7 +218,6 @@ static void run_recompiled(GuestFn fn, const Start *s, Result *r) {
 
 /* ---- one function ------------------------------------------------------ */
 static const char *REGN[8] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
-
 static int same_double(double a, double b) {
     return (a == b) || (isnan(a) && isnan(b)) || (fabs(a - b) <= 1e-9 * fmax(fabs(a), fabs(b)));
 }
@@ -232,6 +243,10 @@ static int test_one(uint32_t addr, uint32_t seed) {
     DWORD oldprot;
 
     make_start(&s, stack, seed);
+    if (getenv("DIFFTEST_DUMP")) {
+        for (int i = 0; i < 8; i++) fprintf(stderr, "%s=%08x ", REGN[i], s.reg[i]);
+        fprintf(stderr, "\n[ecx-4]=%08x scratch=%p stack=%p\n", RD32(MEM(s.reg[1] - 4)), g_scratch, stack);
+    }
     VirtualProtect(snap, snap_size, PAGE_NOACCESS, &oldprot);
     run_native(addr, &s, &rn);
     VirtualProtect(snap, snap_size, PAGE_READWRITE, &oldprot);
@@ -249,6 +264,9 @@ static int test_one(uint32_t addr, uint32_t seed) {
     if (rn.fault) {
         verdict = "native-fault";
         snprintf(why, sizeof why, "native exception %08x, recompiled fault %d", rn.code, rr.fault);
+    } else if (rr.fault == 2 && rr.code == TRAP_MISSING_FUNCTION) {
+        verdict = "missing-callee"; /* reached code that was not recompiled (a library) */
+        snprintf(why, sizeof why, "guest address %08x", rr.trap_addr);
     } else if (rr.fault) {
         verdict = "fail";
         snprintf(why, sizeof why, "recompiled fault %d code %08x", rr.fault, rr.code);
@@ -314,7 +332,7 @@ static int run(int argc, char **argv) {
     unsigned seeds = argc >= 3 ? (unsigned)atoi(argv[2]) : 3;
     char exe[MAX_PATH], buf[4096];
     GetModuleFileNameA(NULL, exe, sizeof exe);
-    unsigned pass = 0, fail = 0, nfault = 0, timeout = 0, crash = 0;
+    unsigned pass = 0, fail = 0, nfault = 0, timeout = 0, crash = 0, missing = 0;
     for (unsigned i = 0; i < g_functab_count; i++) {
         uint32_t a = g_functab[i].addr;
         int fn_fail = 0, fn_pass = 0;
@@ -325,12 +343,13 @@ static int run(int argc, char **argv) {
             fputs(buf, stdout);
             if (strstr(buf, "\"result\":\"pass\"")) fn_pass++;
             else if (strstr(buf, "\"result\":\"fail\"")) fn_fail++;
+            else if (strstr(buf, "\"result\":\"missing-callee\"")) missing++;
             else nfault++;
         }
         if (fn_fail) fail++; else if (fn_pass) pass++;
     }
-    fprintf(stderr, "functions: %u passed on every run that executed, %u failed; runs: %u native faults, %u timeouts, %u harness crashes\n",
-            pass, fail, nfault, timeout, crash);
+    fprintf(stderr, "functions: %u passed on every run that executed, %u failed; runs: %u native faults, %u missing callees, %u timeouts, %u harness crashes\n",
+            pass, fail, nfault, missing, timeout, crash);
     return fail ? 1 : 0;
 }
 

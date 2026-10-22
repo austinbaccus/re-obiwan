@@ -15,8 +15,9 @@ Run in the ghidra-mcp container against a copy of the project:
     /opt/pyghidra-mcp/bin/python3 pcode2c.py <project-dir> <out-dir> [select]
 
 `select` is `leaf` (default: functions with no calls, computed jumps, user
-ops or fs: accesses, for differential testing), `all`, or a file with one
-hex address per line. Coverage statistics for every function in the program
+ops or fs: accesses, for differential testing), `text` (everything in the
+.text section: game, XAPI and CRT, but not the D3D/DSOUND/... library
+sections), `all`, or a file with one hex address per line. Coverage statistics for every function in the program
 are always written to <out-dir>/meta.json.
 """
 import collections
@@ -45,6 +46,18 @@ FCMP = {'FLOAT_EQUAL': '==', 'FLOAT_NOTEQUAL': '!=', 'FLOAT_LESS': '<', 'FLOAT_L
 USEROPS_FLOAT = {'fsin': 'sin', 'fcos': 'cos', 'fpatan': 'rt_fpatan', 'fptan': 'tan',
                  'f2xm1': 'rt_f2xm1', 'fscale': 'rt_fscale', 'log2': 'log2'}
 USEROPS_NOP = {'LOCK', 'UNLOCK', 'ffree'}
+# packed-integer user ops: name -> runtime helper taking (out, in0, in1[, imm])
+USEROPS_PACKED = {'pmaddwd': 'rt_pmaddwd', 'psubsw': 'rt_psubsw', 'packssdw': 'rt_packssdw',
+                  'psllw': 'rt_psllw', 'pshufw': 'rt_pshufw'}
+# instructions that only make sense on real hardware: trap if ever reached
+USEROPS_TRAP = {'in', 'out', 'cpuid', 'cpuid_basic_info', 'cpuid_Version_info', 'cpuid_cache_tlb_info',
+                'cpuid_serial_info', 'cpuid_Deterministic_Cache_Parameters_info',
+                'cpuid_MONITOR_MWAIT_Features_info', 'cpuid_Thermal_Power_Management_info',
+                'cpuid_Extended_Feature_Enumeration_info', 'cpuid_Direct_Cache_Access_info',
+                'cpuid_Architectural_Performance_Monitoring_info', 'cpuid_Extended_Topology_info',
+                'cpuid_Processor_Extended_States_info', 'cpuid_Quality_of_Service_info',
+                'cpuid_brand_part1_info', 'cpuid_brand_part2_info', 'cpuid_brand_part3_info',
+                'invalidInstructionException'}
 
 
 class Unsupported(Exception):
@@ -128,6 +141,13 @@ class FunctionTranslator:
             self.emit(f'WRF80SLOT({self.ptr(v)}, (double)({expr}));')
         else:
             raise Unsupported(f'float write size {size}')
+
+    def wide_src(self, v, n):
+        if self.space(v) == 'const':
+            if v.getOffset() != 0:
+                raise Unsupported('wide non-zero const')
+            return 'g_zero16'
+        return self.ptr(v)
 
     def signed(self, v):
         return f'(({st(v.getSize())}){self.rd(v)})'
@@ -287,7 +307,13 @@ class FunctionTranslator:
             self.userop(a, op, o, ins_)
         elif m in BINOP:
             n = o.getSize()
-            self.wr(o, f'({ut(n)})({self.rd(ins_[0])} {BINOP[m]} {self.rd(ins_[1])})')
+            if n in INT_SIZES:
+                self.wr(o, f'({ut(n)})({self.rd(ins_[0])} {BINOP[m]} {self.rd(ins_[1])})')
+            elif m in ('INT_AND', 'INT_OR', 'INT_XOR'):
+                fn = {'INT_AND': 'and', 'INT_OR': 'or', 'INT_XOR': 'xor'}[m]
+                self.emit(f'wide_{fn}({self.ptr(o)}, {self.wide_src(ins_[0], n)}, {self.wide_src(ins_[1], n)}, {n});')
+            else:
+                raise Unsupported(f'{m} of size {n}')
         elif m in CMP_U:
             self.wr(o, f'{self.rd(ins_[0])} {CMP_U[m]} {self.rd(ins_[1])}')
         elif m in CMP_S:
@@ -381,12 +407,27 @@ class FunctionTranslator:
             self.emit(f'rt_interrupt(ctx, 0x{a:08x}u, {self.rd(args[0])});')
         elif name == 'rdtsc' and o is not None:
             self.wr(o, 'rt_rdtsc(ctx)')
+        elif name in USEROPS_PACKED and o is not None:
+            srcs = ', '.join(self.ptr(x) if self.space(x) != 'const' else f'(uint8_t[8]){{0}}' for x in args
+                             if self.space(x) != 'const' or x.getSize() != 1)
+            imms = [x for x in args if self.space(x) == 'const' and x.getSize() == 1]
+            imm = f', {imms[0].getOffset()}' if imms else ''
+            self.emit(f'{USEROPS_PACKED[name]}({self.ptr(o)}, {srcs}{imm});')
+        elif name in USEROPS_TRAP:
+            self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
         else:
             raise Unsupported(f'userop {name}')
 
     def render(self):
+        # instructions are emitted in address order, and a function body can
+        # contain blocks below its entry point (shared tails, adjustor thunks),
+        # so always start by jumping to the entry
         out = [f'void f_{self.entry:08x}(Ctx *ctx) {{ /* {self.func.getName(True)} */',
                f'    uint8_t U[{self.uniq_size}];']
+        if self.entry in self.insn_addrs:
+            out.append(f'    goto L_{self.entry:08x};')
+        else:  # Ghidra has no instruction at the entry (a stray 1-byte function)
+            out.append(f'    rt_trap(ctx, TRAP_MISSING_FUNCTION, 0x{self.entry:08x}u);')
         for line in self.lines:
             if line.endswith(':;') and line.split(':')[0] not in self.labels_used:
                 continue
@@ -408,7 +449,7 @@ def main(project_dir, out_dir, select='leaf'):
              if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
 
     explicit = None
-    if select not in ('leaf', 'all'):
+    if select not in ('leaf', 'all', 'text'):
         explicit = {int(x, 16) for x in open(select).read().split()}
 
     # First pass: translate everything (with an empty `known` set) to gather
@@ -437,6 +478,8 @@ def main(project_dir, out_dir, select='leaf'):
 
     if select == 'all':
         chosen = sorted(ok)
+    elif select == 'text':
+        chosen = sorted(a for a in ok if meta[a]['block'] == '.text')
     elif select == 'leaf':
         chosen = sorted(a for a in ok if is_leaf(a))
     else:
