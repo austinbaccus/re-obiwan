@@ -20,3 +20,6 @@ pyghidra_mcp_projects/
 .claude/settings.local.json
 .DS_Store
 Thumbs.db
+
+# --- Recompiler build output (generated from game code) ---
+build/
