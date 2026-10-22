@@ -582,14 +582,12 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             return False
         prev = memory.getByte(addr.subtract(1)) & 0xFF
         prev3 = memory.getByte(addr.subtract(3)) & 0xFF
-        return prev in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB, 0x00) or prev3 == 0xC2
+        return prev in (0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB) or prev3 == 0xC2
 
-    # Code pointers in data that land in the XDK library sections: those
-    # libraries' vtables have no RTTI, so the RTTI pass never saw them. Game
-    # code (.text) is left alone: its data-only entry points come from the
-    # RTTI and initializer passes, and a stray constant must not split a
-    # function or disturb a jump table there.
-    lib_blocks = [b for b in code_blocks if b.getName() != '.text']
+    # Code pointers in data: vtables without RTTI (XDK libraries, and game
+    # classes without a locator), callback tables. Only addresses whose
+    # preceding bytes end a function are taken, and make_function never
+    # clears existing code or data, so a stray constant cannot do harm.
     pointer_targets = set()
     for b in memory.getBlocks():
         if b.getName() not in ('.rdata', '.data'):
@@ -597,9 +595,9 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         a_, end = b.getStart(), b.getEnd()
         while a_.add(3).compareTo(end) <= 0:
             v = memory.getInt(a_) & 0xFFFFFFFF
-            if 0x368400 <= v < 0x3bc220:
+            if 0x11000 <= v < 0x3bc220:
                 t = space.getAddress(v)
-                if any(lb.contains(t) for lb in lib_blocks) and looks_like_entry(t):
+                if looks_like_entry(t):
                     pointer_targets.add(t)
             a_ = a_.add(4)
     def make_function(addr):
@@ -626,7 +624,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     for addr in pointer_targets:
         if make_function(addr):
             created += 1
-    print(f'created {created} functions for library code pointers in data', file=sys.stderr)
+    print(f'created {created} functions for code pointers in data', file=sys.stderr)
 
     def call_target_closure():
         made_total = 0
