@@ -7,3 +7,5 @@ table 0x00422ba0 0x00425ae4
 # function pointers taken by value (mov reg, imm / push imm)
 scan immediates
 0x002cac30
+# CRT math functions called through __cintrindisp2's pointer argument
+0x002d1310

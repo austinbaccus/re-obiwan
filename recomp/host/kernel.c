@@ -424,11 +424,26 @@ typedef struct {
     void (*fn)(void *);
     void *arg;
     volatile LONG busy;
+    Ctx *ctx;            /* the guest thread it is running, for diagnostics */
+    char name[48];
 } PoolThread;
 static PoolThread g_pool[POOL_SIZE];
+static __declspec(thread) PoolThread *t_pool;
+
+static PoolThread g_main_thread; /* the process's own thread runs the XBE entry */
+
+void kernel_each_thread(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg) {
+    int busy = 0;
+    for (int i = 0; i < POOL_SIZE; i++) busy += g_pool[i].busy != 0;
+    fprintf(stderr, "  (%d pooled host threads busy)\n", busy);
+    if (g_main_thread.ctx) fn(g_main_thread.thread, g_main_thread.ctx, g_main_thread.name, arg);
+    for (int i = 0; i < POOL_SIZE; i++)
+        if (g_pool[i].busy) fn(g_pool[i].thread, g_pool[i].ctx, g_pool[i].name, arg);
+}
 
 static DWORD WINAPI pool_main(LPVOID p) {
     PoolThread *t = p;
+    t_pool = t;
     for (;;) {
         WaitForSingleObject(t->wake, INFINITE);
         t->fn(t->arg);
@@ -449,7 +464,10 @@ static HANDLE pool_run(void (*fn)(void *), void *arg) {
             g_pool[i].fn = fn;
             g_pool[i].arg = arg;
             SetEvent(g_pool[i].wake);
-            return g_pool[i].thread;
+            /* the guest gets its own handle: it closes it when it is done with the thread */
+            HANDLE h;
+            DuplicateHandle(GetCurrentProcess(), g_pool[i].thread, GetCurrentProcess(), &h, 0, FALSE, DUPLICATE_SAME_ACCESS);
+            return h;
         }
     fprintf(stderr, "out of pooled host threads (%d)", POOL_SIZE);
     exit(13);
@@ -471,6 +489,13 @@ void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t 
     Ctx *ctx = _aligned_malloc(sizeof(Ctx), 16);
     memset(ctx, 0, sizeof *ctx);
     t_ctx = ctx;
+    PoolThread *pt = t_pool;
+    if (!pt) {
+        pt = &g_main_thread;
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &pt->thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    }
+    pt->ctx = ctx;
+    snprintf(pt->name, sizeof pt->name, "start %08x", start_routine);
     /* The kernel carves the TLS block off the top of the stack: TlsData sits
        at StackBase - TlsDataSize, which is what XAPI's _tls_index (-size/4)
        addresses through fs:[4]. XapiThreadStartup fills it in. */
@@ -485,18 +510,18 @@ void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t 
     for (int i = 0; i < 8; i++) WRF80SLOT(ctx->r + REG_ST0 + 0x10 * i, bits_f64(0xfff8000000000000ull));
     /* SystemRoutine(StartRoutine, StartContext), stdcall */
     uint32_t esp = tls - 16; /* the stack proper ends where the TLS block starts */
-    WR32(MEM(esp + 4), start_routine);
-    WR32(MEM(esp + 8), start_context);
-    WR32(MEM(esp), 0xdead0000u); /* return address: the thread exits instead */
     WR32(ctx->r + REG_ESP, esp);
     trace("thread start: system %08x start %08x ctx %08x stack %08x..%08x", system_routine, start_routine,
           start_context, stack, stack_base);
     jmp_buf exit_jb;
     jmp_buf *prev = t_thread_exit;
     t_thread_exit = &exit_jb;
-    if (!setjmp(exit_jb)) rt_call(ctx, system_routine);
+    if (!setjmp(exit_jb)) {
+        uint32_t args[2] = {start_routine, start_context};
+        rt_host_call(ctx, system_routine, 2, args); /* returning means the thread exits */
+    }
     t_thread_exit = prev;
-    trace("thread %08x returned", start_routine);
+    fprintf(stderr, "kernel: thread %08x (start %08x) ended\n", system_routine, start_routine);
 }
 
 /* ---- kernel functions ------------------------------------------------------ */
@@ -649,13 +674,107 @@ K(RtlTimeFieldsToTime) {
     WR64(MEM(ARG(ctx, 1)), ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime);
     RET(ok, 2);
 }
+/* Structured exception handling. The handlers (the CRT's __CxxFrameHandler
+   and _except_handler3, through the per-function __ehhandler$ stubs) are
+   recompiled guest code; the kernel's part is walking the fs:[0] chain,
+   calling each handler as a cdecl routine, and (RtlUnwind) continuing at the
+   caller's return point, which rt_resume does for an instruction inside a
+   function. The CONTEXT record is only passed along. */
+#define SEH_CHAIN_END 0xFFFFFFFFu
+#define EXCEPTION_UNWINDING_ 2
+#define EXCEPTION_EXIT_UNWIND_ 4
+#define STATUS_UNWIND_ 0xC0000027u
+
+static uint32_t seh_head(Ctx *ctx) { return RD32(ctx->r + REG_FS_OFFSET); } /* NT_TIB.ExceptionList is at fs:[0] */
+
+static void build_context(Ctx *ctx, uint32_t at, uint32_t eip, uint32_t esp) {
+    memset(MEM(at), 0, 0x2cc);
+    WR32(MEM(at), 0x10007); /* CONTEXT_FULL */
+    WR32(MEM(at + 0x9c), RD32(ctx->r + REG_EDI));
+    WR32(MEM(at + 0xa0), RD32(ctx->r + REG_ESI));
+    WR32(MEM(at + 0xa4), RD32(ctx->r + REG_EBX));
+    WR32(MEM(at + 0xa8), RD32(ctx->r + REG_EDX));
+    WR32(MEM(at + 0xac), RD32(ctx->r + REG_ECX));
+    WR32(MEM(at + 0xb0), RD32(ctx->r + REG_EAX));
+    WR32(MEM(at + 0xb4), RD32(ctx->r + REG_EBP));
+    WR32(MEM(at + 0xb8), eip);
+    WR32(MEM(at + 0xbc), 0x1b);
+    WR32(MEM(at + 0xc0), 0x202);
+    WR32(MEM(at + 0xc4), esp);
+    WR32(MEM(at + 0xc8), 0x23);
+}
+
+static uint32_t call_handler(Ctx *ctx, uint32_t handler, uint32_t rec, uint32_t frame, uint32_t context, uint32_t dc) {
+    uint32_t args[4] = {rec, frame, context, dc};
+    trace("  handler %08x(record %08x, frame %08x)", handler, rec, frame);
+    return rt_host_call(ctx, handler, 4, args);
+}
+
 K(RtlRaiseException) {
     uint32_t rec = ARG(ctx, 0);
-    fprintf(stderr, "RtlRaiseException code %08x at %08x (C++ throw not supported yet)\n", RD32(MEM(rec)),
-            RD32(MEM(rec + 12)));
-    rt_trap(ctx, TRAP_UNSUPPORTED, RD32(MEM(rec + 12)));
+    uint32_t esp0 = RD32(ctx->r + REG_ESP);
+    uint32_t code = RD32(MEM(rec)), addr = RD32(MEM(rec + 12));
+    /* the CONTEXT and DISPATCHER_CONTEXT live on the guest stack below the caller */
+    uint32_t context = (esp0 - 0x2cc - 0x40) & ~15u, dc = context - 16;
+    build_context(ctx, context, addr, esp0 + 8);
+    WR32(ctx->r + REG_ESP, dc - 16);
+    fprintf(stderr, "RtlRaiseException: code %08x at %08x (esp %08x)\n", code, addr, esp0);
+    uint32_t frame = RD32(MEM(seh_head(ctx)));
+    while (frame != SEH_CHAIN_END && frame) {
+        uint32_t next = RD32(MEM(frame)), handler = RD32(MEM(frame + 4));
+        WR32(MEM(dc), 0);
+        uint32_t d = call_handler(ctx, handler, rec, frame, context, dc);
+        if (d == 1 || d == 2) { frame = next; continue; } /* ExceptionContinueSearch, ExceptionNestedException */
+        if (d == 0) {
+            fprintf(stderr, "RtlRaiseException: a handler wants to continue at %08x; not supported\n", RD32(MEM(context + 0xb8)));
+            rt_trap(ctx, TRAP_UNSUPPORTED, addr);
+        }
+        fprintf(stderr, "RtlRaiseException: handler %08x returned disposition %u\n", handler, d);
+        rt_trap(ctx, TRAP_UNSUPPORTED, addr);
+    }
+    fprintf(stderr, "unhandled exception %08x at %08x", code, addr);
+    if (code == 0xE06D7363u) fprintf(stderr, " (C++ throw: object %08x, throw info %08x)", RD32(MEM(rec + 0x18)), RD32(MEM(rec + 0x1c)));
+    fprintf(stderr, "\n");
+    rt_trap(ctx, TRAP_UNSUPPORTED, addr);
 }
-K(RtlUnwind) { fprintf(stderr, "RtlUnwind not supported yet\n"); rt_trap(ctx, TRAP_UNSUPPORTED, 0); }
+
+K(RtlUnwind) { /* (TargetFrame, TargetIp, ExceptionRecord, ReturnValue) */
+    uint32_t target = ARG(ctx, 0), target_ip = ARG(ctx, 1), rec = ARG(ctx, 2), rv = ARG(ctx, 3);
+    uint32_t esp0 = RD32(ctx->r + REG_ESP), ret = RD32(MEM(esp0));
+    uint32_t context = (esp0 - 0x2cc - 0xa0) & ~15u, dc = context - 16, tmprec = context - 0x70;
+    if (!rec) {
+        rec = tmprec;
+        memset(MEM(rec), 0, 0x50);
+        WR32(MEM(rec), STATUS_UNWIND_);
+        WR32(MEM(rec + 12), ret);
+    }
+    uint32_t flags = RD32(MEM(rec + 4)) | EXCEPTION_UNWINDING_;
+    if (!target) flags |= EXCEPTION_EXIT_UNWIND_;
+    WR32(MEM(rec + 4), flags);
+    build_context(ctx, context, target_ip ? target_ip : ret, esp0 + 20);
+    WR32(ctx->r + REG_ESP, tmprec - 32);
+    trace("RtlUnwind(frame %08x, ip %08x, record %08x)", target, target_ip, rec);
+    uint32_t head = seh_head(ctx), frame;
+    while ((frame = RD32(MEM(head))) != SEH_CHAIN_END && frame && frame != target) {
+        if (target && frame > target) {
+            fprintf(stderr, "RtlUnwind: frame %08x is past the target %08x\n", frame, target);
+            rt_trap(ctx, TRAP_UNSUPPORTED, ret);
+        }
+        uint32_t next = RD32(MEM(frame)), handler = RD32(MEM(frame + 4));
+        WR32(MEM(dc), 0);
+        uint32_t d = call_handler(ctx, handler, rec, frame, context, dc);
+        WR32(MEM(head), next); /* unlink the frame */
+        if (d != 1 && d != 3) { /* anything but ContinueSearch / CollidedUnwind */
+            fprintf(stderr, "RtlUnwind: handler %08x returned disposition %u\n", handler, d);
+            rt_trap(ctx, TRAP_UNSUPPORTED, ret);
+        }
+    }
+    /* back in the caller with the arguments popped and eax = ReturnValue, at
+       TargetIp (a label after the call) if one was given */
+    WR32(ctx->r + REG_ESP, esp0 + 4 + 16);
+    SET_EAX(ctx, rv);
+    if (target_ip) rt_resume(ctx, target_ip);
+}
 
 K(KeQueryPerformanceCounter) {
     LARGE_INTEGER c;
@@ -731,11 +850,7 @@ K(KeSynchronizeExecution) {
     /* call the routine directly: SynchronizeRoutine(SynchronizeContext) */
     uint32_t routine = ARG(ctx, 1), arg = ARG(ctx, 2);
     RET_STDCALL(ctx, 3);
-    uint32_t esp = RD32(ctx->r + REG_ESP) - 8;
-    WR32(MEM(esp + 4), arg);
-    WR32(MEM(esp), 0xdead0001u);
-    WR32(ctx->r + REG_ESP, esp);
-    rt_call(ctx, routine);
+    rt_host_call(ctx, routine, 1, &arg);
     SET_EAX(ctx, 1);
 }
 K(HalReturnToFirmware) { fprintf(stderr, "HalReturnToFirmware(%u): game exited\n", ARG(ctx, 0)); exit(0); }
@@ -1298,6 +1413,29 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
     g_tick_count_addr = kmem_alloc(4, 4);
     g_hardware_info_addr = kmem_alloc(16, 4);
     g_launch_data_page_addr = kmem_alloc(4, 4); /* LaunchDataPage is a pointer variable: NULL = cold boot */
+    {   /* a relaunch (XLaunchNewImageA) left launch.bin: build the LAUNCH_DATA_PAGE
+           {Header {dwLaunchDataType, dwTitleId, szLaunchPath[520], dwFlags}, pad, LaunchData[3072]} */
+        char file[MAX_PATH];
+        snprintf(file, sizeof file, "%s\\..\\launch.bin", hdd_dir);
+        if (getenv("RECOMP_LAUNCH")) snprintf(file, sizeof file, "%s", getenv("RECOMP_LAUNCH")); /* replay a saved launch */
+        FILE *f = fopen(file, "rb");
+        if (f) {
+            uint32_t page = kmem_alloc(4096, 4096);
+            WR32(MEM(page), 0);                  /* LDT_TITLE */
+            WR32(MEM(page + 4), 0x4156000F);     /* this title */
+            strcpy((char *)MEM(page + 8), "d:\\default.xbe");
+            WR32(MEM(page + 8 + 520), 0);
+            fread(MEM(page + 1024), 1, 3072, f);
+            fclose(f);
+            if (!getenv("RECOMP_LAUNCH")) { /* keep it as launch.last.bin for RECOMP_LAUNCH replays */
+                char keep[MAX_PATH];
+                snprintf(keep, sizeof keep, "%s\\..\\launch.last.bin", hdd_dir);
+                MoveFileExA(file, keep, MOVEFILE_REPLACE_EXISTING);
+            }
+            WR32(MEM(g_launch_data_page_addr), page);
+            fprintf(stderr, "kernel: launch data from a previous run at %08x\n", page);
+        }
+    }
     g_hd_key_addr = kmem_alloc(16, 4);
     g_sig_key_addr = kmem_alloc(16, 4);
     g_disk_cache_count_addr = kmem_alloc(4, 4);

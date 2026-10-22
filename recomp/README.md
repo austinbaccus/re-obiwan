@@ -96,6 +96,9 @@ numbers. Known gaps, roughly in the order they will matter:
 - Non-leaf functions are translated but not yet tested: they need the
   harness to provide callees (recompiled ones, or traps) and `fs:` (the SEH
   chain and TLS).
+- C++ exceptions and SEH run the original CRT handlers; see "C++ exceptions
+  and SEH" in `docs/recomp/recompiler-notes.md` for how continuations are
+  entered (`rt_resume`, resumable functions).
 - 10 functions use instructions the translator does not handle yet (port
   I/O, `cpuid` and a few MMX ops), all in library or startup code.
 - x87 is modelled with 64-bit doubles. The harness runs the original code

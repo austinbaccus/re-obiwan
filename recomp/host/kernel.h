@@ -55,6 +55,8 @@ void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t 
                        uint32_t tls_size, uint32_t system_routine);
 
 Ctx *kernel_current_ctx(void); /* the guest context of the calling host thread, or NULL */
+void kernel_each_thread(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg); /* every running guest thread */
+uint32_t d3d_frame_count(void); /* hooks_d3d.c: frames presented so far */
 extern int g_trace; /* RECOMP_TRACE=1: log every kernel call and hook */
 void trace(const char *fmt, ...);
 

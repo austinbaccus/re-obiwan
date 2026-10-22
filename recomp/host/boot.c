@@ -43,32 +43,36 @@ static void print_guest_location(HANDLE proc, DWORD64 pc) {
     fprintf(stderr, "         guest %s, last block %s  (%s:%lu)\n", comment, label, strrchr(line.FileName, '\\') ? strrchr(line.FileName, '\\') + 1 : line.FileName, line.LineNumber);
 }
 
-/* Print where a host crash happened. Recompiled functions are named after
-   their guest address (f_XXXXXXXX), so the symbol says which guest function
-   it was. */
-static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
-    static int in_filter;
-    if (in_filter++) ExitProcess(20);
-    CONTEXT *c = e->ContextRecord;
-    fprintf(stderr, "\n*** host exception %08lx at %08lx (eax %08lx ecx %08lx edx %08lx esp %08lx ebp %08lx)\n",
-            e->ExceptionRecord->ExceptionCode, (DWORD)(uintptr_t)e->ExceptionRecord->ExceptionAddress,
-            c->Eax, c->Ecx, c->Edx, c->Esp, c->Ebp);
-    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
-        fprintf(stderr, "    %s address %08lx\n", e->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
-                (DWORD)e->ExceptionRecord->ExceptionInformation[1]);
-    Ctx *g = kernel_current_ctx();
-    if (g) {
-        fprintf(stderr, "    guest eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x\n",
-                RD32(g->r + REG_EAX), RD32(g->r + REG_ECX), RD32(g->r + REG_EDX), RD32(g->r + REG_EBX),
-                RD32(g->r + REG_ESP), RD32(g->r + REG_EBP), RD32(g->r + REG_ESI), RD32(g->r + REG_EDI));
-        uint32_t gesp = RD32(g->r + REG_ESP);
-        fprintf(stderr, "    guest stack:");
-        for (int i = 0; i < 12; i++) fprintf(stderr, " %08x", RD32(MEM(gesp + 4 * i)));
-        fprintf(stderr, "\n");
-    }
-    HANDLE proc = GetCurrentProcess();
+static void init_symbols(void) {
+    static int done;
+    if (done++) return;
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
-    SymInitialize(proc, NULL, TRUE);
+    SymInitialize(GetCurrentProcess(), NULL, TRUE);
+}
+
+/* The guest registers of a thread and the return addresses on its guest stack */
+static void print_guest_state(Ctx *g) {
+    fprintf(stderr, "    guest eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x\n",
+            RD32(g->r + REG_EAX), RD32(g->r + REG_ECX), RD32(g->r + REG_EDX), RD32(g->r + REG_EBX),
+            RD32(g->r + REG_ESP), RD32(g->r + REG_EBP), RD32(g->r + REG_ESI), RD32(g->r + REG_EDI));
+    uint32_t gesp = RD32(g->r + REG_ESP);
+    fprintf(stderr, "    guest stack:");
+    for (int i = 0; i < 12; i++) fprintf(stderr, " %08x", RD32(MEM(gesp + 4 * i)));
+    fprintf(stderr, "\n    guest return addresses:");
+    int n = 0;
+    for (uint32_t a = gesp; a < gesp + 0x800 && n < 16; a += 4) {
+        uint32_t v = RD32(MEM(a));
+        const FuncEntry *e = v >= 0x10000 && v < 0x530000 ? rt_lookup_containing(v) : NULL;
+        if (e && v != e->addr) { fprintf(stderr, " %08x(%s)", v, e->name); n++; }
+    }
+    fprintf(stderr, "\n");
+}
+
+/* Print a host stack. Recompiled functions are named after their guest
+   address (f_XXXXXXXX), so the symbol says which guest function it was. */
+static void print_host_stack(HANDLE thread, const CONTEXT *c) {
+    HANDLE proc = GetCurrentProcess();
+    init_symbols();
     STACKFRAME64 frame = {0};
     frame.AddrPC.Offset = c->Eip; frame.AddrPC.Mode = AddrModeFlat;
     frame.AddrFrame.Offset = c->Ebp; frame.AddrFrame.Mode = AddrModeFlat;
@@ -85,12 +89,58 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
         else
             fprintf(stderr, "    #%-2d %08llx ?\n", depth, frame.AddrPC.Offset);
         if (depth < 4) print_guest_location(proc, frame.AddrPC.Offset);
-        if (!StackWalk64(IMAGE_FILE_MACHINE_I386, proc, GetCurrentThread(), &frame, &cc, NULL,
+        if (!StackWalk64(IMAGE_FILE_MACHINE_I386, proc, thread, &frame, &cc, NULL,
                          SymFunctionTableAccess64, SymGetModuleBase64, NULL) || !frame.AddrPC.Offset)
             break;
     }
     fflush(stderr);
+}
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
+    static int in_filter;
+    if (in_filter++) ExitProcess(20);
+    CONTEXT *c = e->ContextRecord;
+    fprintf(stderr, "\n*** host exception %08lx at %08lx (eax %08lx ecx %08lx edx %08lx esp %08lx ebp %08lx)\n",
+            e->ExceptionRecord->ExceptionCode, (DWORD)(uintptr_t)e->ExceptionRecord->ExceptionAddress,
+            c->Eax, c->Ecx, c->Edx, c->Esp, c->Ebp);
+    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+        fprintf(stderr, "    %s address %08lx\n", e->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+                (DWORD)e->ExceptionRecord->ExceptionInformation[1]);
+    Ctx *g = kernel_current_ctx();
+    if (g) print_guest_state(g);
+    print_host_stack(GetCurrentThread(), c);
     ExitProcess(21);
+}
+
+/* RECOMP_STALL=seconds: when no frame has been presented for that long,
+   print where every guest thread is and exit. */
+static void dump_thread(HANDLE thread, Ctx *g, const char *what, void *arg) {
+    (void)arg;
+    fprintf(stderr, "\n  thread %s:\n", what);
+    if (SuspendThread(thread) == (DWORD)-1) { fprintf(stderr, "    cannot suspend (error %lu)\n", GetLastError()); return; }
+    CONTEXT c = {0};
+    c.ContextFlags = CONTEXT_FULL;
+    if (GetThreadContext(thread, &c)) {
+        if (g) print_guest_state(g);
+        print_host_stack(thread, &c);
+    } else fprintf(stderr, "    cannot read the context (error %lu)\n", GetLastError());
+    ResumeThread(thread);
+}
+
+static DWORD WINAPI stall_watchdog(LPVOID p) {
+    int limit = (int)(intptr_t)p;
+    uint32_t last = d3d_frame_count();
+    for (int quiet = 0, dumps = 0;;) {
+        Sleep(1000);
+        uint32_t now = d3d_frame_count();
+        if (now != last) { last = now; quiet = 0; continue; }
+        if (++quiet < limit) continue;
+        fprintf(stderr, "\n*** no frame presented for %d s (frame %u): guest threads\n", limit, now);
+        kernel_each_thread(dump_thread, NULL);
+        fflush(stderr);
+        if (++dumps == 3) ExitProcess(22); /* a few samples show whether it moves */
+        quiet = 0;
+    }
 }
 
 #define GUEST_RAM_START 0x00600000u
@@ -102,6 +152,8 @@ static int run(int argc, char **argv) {
     SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
     SetUnhandledExceptionFilter(crash_filter);
     if (getenv("RECOMP_TRACE")) g_trace = 1;
+    if (getenv("RECOMP_STALL"))
+        CreateThread(NULL, 0, stall_watchdog, (void *)(intptr_t)atoi(getenv("RECOMP_STALL")), 0, NULL);
     if (getenv("RECOMP_TRACE_CALLS")) g_trace_calls = atoi(getenv("RECOMP_TRACE_CALLS"));
 
     XbeInfo xbe;

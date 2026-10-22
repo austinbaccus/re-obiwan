@@ -29,6 +29,7 @@ enum { T_VERTEXBUFFER = 0, T_INDEXBUFFER = 1, T_PUSHBUFFER = 2, T_PALETTE = 3, T
 static uint32_t g_device, g_backbuffer, g_depth, g_rendertarget;
 static float g_transforms[512][16];
 static uint32_t g_frames;
+uint32_t d3d_frame_count(void) { return g_frames; }
 
 static int bytes_per_pixel(uint32_t fmt) {
     switch (fmt) {

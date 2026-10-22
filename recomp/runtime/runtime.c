@@ -144,8 +144,72 @@ void rt_call(Ctx *ctx, uint32_t addr) {
     if ((addr & 0xFFFF0000u) == 0xDEAD0000u) return; /* host-pushed return address: thread or callback ends */
     GuestFn fn = rt_lookup(addr);
     if (g_trace_calls) fprintf(stderr, "  -> %08x%s (esp %08x)\n", addr, fn ? "" : " (missing)", RD32(ctx->r + REG_ESP));
-    if (!fn) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
+    if (!fn) {
+        /* a call into the middle of a function: a catch/filter funclet */
+        const FuncEntry *e = rt_lookup_containing(addr);
+        if (!e || !e->resumable) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
+        ctx->resume_ip = addr;
+        e->fn(ctx);
+        return;
+    }
     fn(ctx);
+}
+
+const FuncEntry *rt_lookup_containing(uint32_t ip) {
+    /* bodies can nest (a mis-bounded function spanning its neighbours):
+       the smallest one wins */
+    const FuncEntry *best = NULL;
+    for (unsigned i = 0; i < g_functab_count; i++)
+        if (g_functab[i].lo <= ip && ip <= g_functab[i].hi && (!best || g_functab[i].hi - g_functab[i].lo < best->hi - best->lo))
+            best = &g_functab[i];
+    return best;
+}
+
+void rt_resume(Ctx *ctx, uint32_t ip) {
+    for (;;) {
+        if ((ip & 0xFFFF0000u) == 0xDEAD0000u) {
+            /* the frame the host entered returned: back to that host caller */
+            int depth = ip & 0xFFFF;
+            if (depth >= ctx->host_depth || !ctx->host_entries[depth]) {
+                fprintf(stderr, "rt_resume: no host entry %d (depth %d)\n", depth, ctx->host_depth);
+                rt_trap(ctx, TRAP_MISSING_FUNCTION, ip);
+            }
+            fprintf(stderr, "  resume: back to host entry %d\n", depth);
+            longjmp(*ctx->host_entries[depth], 1);
+        }
+        const FuncEntry *e = rt_lookup_containing(ip);
+        if (!e) rt_trap(ctx, TRAP_MISSING_FUNCTION, ip);
+        fprintf(stderr, "  resume %08x in %s (esp %08x)\n", ip, e->name, RD32(ctx->r + REG_ESP));
+        if (ip == e->addr) e->fn(ctx);
+        else {
+            if (!e->resumable) {
+                fprintf(stderr, "rt_resume: %s (%08x) cannot be entered at %08x: add it to docs/recomp/resumable-functions.txt\n",
+                        e->name, e->addr, ip);
+                rt_trap(ctx, TRAP_MISSING_FUNCTION, ip);
+            }
+            ctx->resume_ip = ip;
+            e->fn(ctx);
+        }
+        ip = ctx->ret_ip;
+    }
+}
+
+uint32_t rt_host_call(Ctx *ctx, uint32_t addr, int nargs, const uint32_t *args) {
+    if (ctx->host_depth >= (int)(sizeof ctx->host_entries / sizeof ctx->host_entries[0])) rt_trap(ctx, TRAP_UNSUPPORTED, addr);
+    uint32_t esp = RD32(ctx->r + REG_ESP) - 4 * (nargs + 1);
+    for (int i = 0; i < nargs; i++) WR32(MEM(esp + 4 + 4 * i), args[i]);
+    WR32(MEM(esp), 0xDEAD0000u | (uint32_t)ctx->host_depth);
+    WR32(ctx->r + REG_ESP, esp);
+    jmp_buf jb;
+    int depth = ctx->host_depth++;
+    ctx->host_entries[depth] = &jb;
+    if (setjmp(jb) == 0) rt_call(ctx, addr);
+    /* either the callee returned here, or rt_resume unwound to this entry:
+       in both cases the guest `ret` already popped the return address */
+    ctx->host_depth = depth;
+    ctx->host_entries[depth] = NULL;
+    WR32(ctx->r + REG_ESP, esp + 4 + 4 * nargs);
+    return RD32(ctx->r + REG_EAX);
 }
 
 void rt_trace_call(Ctx *ctx, uint32_t addr) {
@@ -156,8 +220,13 @@ void rt_trace_call(Ctx *ctx, uint32_t addr) {
             RD32(MEM(esp)), RD32(MEM(esp + 4)), RD32(MEM(esp + 8)), RD32(MEM(esp + 12)));
 }
 
-/* A jump out of the current function: run the target as if tail-called. */
-void rt_jump(Ctx *ctx, uint32_t addr) { rt_call(ctx, addr); }
+/* A jump out of the current function: a tail call when the target is a
+   function entry, otherwise an exception continuation (`_JumpToContinuation`,
+   longjmp) that never comes back to this host frame. */
+void rt_jump(Ctx *ctx, uint32_t addr) {
+    if (addr >= 0xDEAD0000u || rt_lookup(addr)) { rt_call(ctx, addr); return; }
+    rt_resume(ctx, addr);
+}
 
 void rt_interrupt(Ctx *ctx, uint32_t addr, uint32_t vector) {
     (void)vector;

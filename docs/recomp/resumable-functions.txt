@@ -1,0 +1,2 @@
+# Functions that must be enterable at any instruction (exception continuations)
+# the translator could not detect; one hex address per line.

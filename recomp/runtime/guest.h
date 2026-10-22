@@ -36,6 +36,10 @@ typedef struct Ctx {
     jmp_buf *trap_jmp;   /* where rt_trap longjmps to; NULL aborts */
     TrapKind trap;
     uint32_t trap_addr;
+    uint32_t ret_ip;     /* return address popped by the last `ret` (see rt_resume) */
+    uint32_t resume_ip;  /* when set, a resumable function starts at this instruction */
+    int host_depth;      /* host->guest entries on this thread (see rt_host_call) */
+    jmp_buf *host_entries[32];
 } Ctx;
 
 typedef void (*GuestFn)(Ctx *ctx);
@@ -43,6 +47,8 @@ typedef struct {
     uint32_t addr;
     GuestFn fn;
     const char *name;
+    uint32_t lo, hi;     /* first and last instruction of the body */
+    int resumable;       /* has an entry for any instruction (ctx->resume_ip) */
 } FuncEntry;
 
 extern const FuncEntry g_functab[];
@@ -128,6 +134,15 @@ extern void (*g_host_vcall)(Ctx *ctx, uint32_t id);      /* vtable slots of host
 extern int g_trace_calls; /* 1: indirect calls, 2: every call */
 void rt_trace_call(Ctx *ctx, uint32_t addr);
 void rt_jump(Ctx *ctx, uint32_t addr);
+/* Run the guest from an instruction inside a function (an exception
+   continuation) and keep running its callers as each returns; never returns. */
+_Noreturn void rt_resume(Ctx *ctx, uint32_t ip);
+/* Call a guest routine from the host: pushes the arguments and a return
+   address the runtime recognises, returns the callee's eax with the stack
+   popped past the arguments (callers of stdcall routines pass nargs 0 after
+   pushing nothing: the callee pops). */
+uint32_t rt_host_call(Ctx *ctx, uint32_t addr, int nargs, const uint32_t *args);
+const FuncEntry *rt_lookup_containing(uint32_t ip);
 void rt_interrupt(Ctx *ctx, uint32_t addr, uint32_t vector);
 uint64_t rt_rdtsc(Ctx *ctx);
 GuestFn rt_lookup(uint32_t addr);

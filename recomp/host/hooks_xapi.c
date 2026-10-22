@@ -18,10 +18,33 @@ HOOK(XapiBootToDash) {
             ARG(ctx, 1), ARG(ctx, 2));
     exit(0);
 }
+/* XLaunchNewImageA(pszImagePath, pLaunchData): the game relaunches its own
+   XBE with 3 KB of launch data (after the attract loop, or to start a
+   level). Save the data next to the executable and start a fresh process;
+   boot.c turns the file into the LaunchDataPage the kernel exports. */
 HOOK(XLaunchNewImageA) {
-    const char *path = ARG(ctx, 0) ? (const char *)MEM(ARG(ctx, 0)) : "(dashboard)";
-    fprintf(stderr, "XLaunchNewImageA(%s): the game exited\n", path);
-    exit(0);
+    const char *path = ARG(ctx, 0) ? (const char *)MEM(ARG(ctx, 0)) : "";
+    uint32_t data = ARG(ctx, 1);
+    fprintf(stderr, "XLaunchNewImageA(%s): relaunching with %s\n", path, data ? "launch data" : "no launch data");
+    if (!path[0] || _stricmp(path, "d:\\default.xbe") != 0) { fprintf(stderr, "  not this title: exiting\n"); exit(0); }
+    char exe[MAX_PATH], file[MAX_PATH];
+    GetModuleFileNameA(NULL, exe, sizeof exe);
+    strcpy(file, exe);
+    char *slash = strrchr(file, '\\');
+    strcpy(slash ? slash + 1 : file, "launch.bin");
+    FILE *f = fopen(file, "wb");
+    if (f) {
+        uint8_t zero[3072] = {0};
+        fwrite(data ? MEM(data) : zero, 1, 3072, f);
+        fclose(f);
+    }
+    STARTUPINFOA si = {sizeof si};
+    PROCESS_INFORMATION pi;
+    char cmd[2048];
+    snprintf(cmd, sizeof cmd, "%s", GetCommandLineA());
+    if (CreateProcessA(NULL, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) exit(0);
+    fprintf(stderr, "  relaunch failed (error %lu)\n", GetLastError());
+    exit(1);
 }
 HOOK(XapiInitAutoPowerDown) { RET_CDECL(ctx); }
 

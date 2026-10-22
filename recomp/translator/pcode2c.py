@@ -90,6 +90,7 @@ class FunctionTranslator:
         self.uniq = {}              # unique offset -> compact offset
         self.uniq_size = 0
         self.needs_dispatch = False  # function has computed jumps: emit one shared switch
+        self.resumable = False       # can be entered mid-body (SEH/C++ EH continuations, setjmp)
 
     # ---- varnodes -------------------------------------------------------
     def space(self, v):
@@ -116,12 +117,17 @@ class FunctionTranslator:
         if self.space(v) == 'const':
             val = v.getOffset() & ((1 << (8 * size)) - 1) if size <= 8 else v.getOffset()
             return f'(({ut(size)})0x{val:x}ull)' if size in INT_SIZES else self.unsup(f'const size {size}')
+        if size == 10:  # an 80-bit integer temporary (fprem's quotient): 64 bits suffice
+            return f'RD64({self.ptr(v)})'
         if size not in INT_SIZES:
             raise Unsupported(f'int read of size {size}')
         return f'RD{size * 8}({self.ptr(v)})'
 
     def wr(self, v, expr):
         size = v.getSize()
+        if size == 10:
+            self.emit(f'WR64({self.ptr(v)}, (uint64_t)({expr}));')
+            return
         if size not in INT_SIZES:
             raise Unsupported(f'int write of size {size}')
         self.emit(f'WR{size * 8}({self.ptr(v)}, ({ut(size)})({expr}));')
@@ -156,7 +162,7 @@ class FunctionTranslator:
         return self.ptr(v)
 
     def signed(self, v):
-        return f'(({st(v.getSize())}){self.rd(v)})'
+        return f'(({st(min(v.getSize(), 8))}){self.rd(v)})'
 
     def unsup(self, what):
         raise Unsupported(what)
@@ -319,6 +325,49 @@ class FunctionTranslator:
             self.features['jumptable_read'] += 1
         return out
 
+    def detect_resumable(self):
+        """Control can re-enter this function at an instruction that is not
+        its entry: it registers an exception handler (an `__ehhandler$` stub
+        or `_except_handler3`, whose catch/except blocks are resumed through
+        RtlUnwind and `_JumpToContinuation`), takes the address of one of its
+        own instructions (RtlUnwind return points), or calls setjmp."""
+        if self.entry in EXTRA_RESUMABLE:
+            return True
+        fm = self.program.getFunctionManager()
+        listing = self.program.getListing()
+        for ins in self.insns:
+            mn = ins.getMnemonicString().upper()
+            if ins.getFlowType().isCall():
+                for flow in ins.getFlows():
+                    f = fm.getFunctionAt(flow)
+                    if f is not None and 'setjmp' in f.getName().lower():
+                        return True
+            if mn not in ('PUSH', 'MOV'):
+                continue
+            for i in range(ins.getNumOperands()):
+                for obj in ins.getOpObjects(i):
+                    if not hasattr(obj, 'getUnsignedValue'):
+                        continue
+                    v = obj.getUnsignedValue()
+                    if v in self.insn_addrs and v != self.entry:
+                        return True
+                    if not 0x10000 <= v < 0x600000:
+                        continue
+                    t = listing.getInstructionAt(self.space_.getAddress(v))
+                    if t is None:
+                        continue
+                    f = fm.getFunctionAt(t.getAddress())
+                    if f is None:
+                        continue
+                    if 'except_handler' in f.getName().lower():
+                        return True
+                    # __ehhandler$ stubs: mov eax, FuncInfo; jmp ___CxxFrameHandler
+                    if str(t).upper().startswith('MOV EAX,0X'):
+                        n = t.getNext()
+                        if n is not None and n.getMnemonicString().upper() == 'JMP':
+                            return True
+        return False
+
     def translate(self):
         listing = self.program.getListing()
         self.body = self.func.getBody()
@@ -326,6 +375,9 @@ class FunctionTranslator:
         self.insns = self.collect_insns()
         self.insn_addrs = {i.getAddress().getOffset() for i in self.insns}
         self.labels_used.add(f'L_{self.entry:08x}')
+        self.resumable = self.detect_resumable()
+        if self.resumable:
+            self.needs_dispatch = True
         self.collect_uniques()
         for idx, ins in enumerate(self.insns):
             a = ins.getAddress().getOffset()
@@ -341,6 +393,11 @@ class FunctionTranslator:
                 self.op(ins, a, i, op, ops)
             if len(ops) in rel_targets:
                 self.lines.append(f'L_{a:08x}_{len(ops)}:;')
+            if ins.getMnemonicString().upper() in ('FPREM', 'FPREM1'):
+                # Ghidra's p-code computes the whole remainder at once but leaves the
+                # status word alone; the CRT's fmod loops while C2 (partial result) is set
+                sw = self.program.getRegister('FPUStatusWord').getOffset()
+                self.emit(f'WR16((ctx->r + 0x{sw:x}), (uint16_t)(RD16((ctx->r + 0x{sw:x})) & 0xfbff)); /* C2 = 0 */')
             # explicit fall-through when the next emitted instruction is not the next in memory
             ft = ins.getFallThrough()
             if ft is not None:
@@ -413,7 +470,9 @@ class FunctionTranslator:
             self.features['callind'] += 1
             self.emit(f'rt_call(ctx, {self.rd(ins_[0])});')
         elif m == 'RETURN':
-            self.emit('return;')
+            # the return address lets rt_resume continue the caller after a
+            # function that was entered mid-body (exception continuation) returns
+            self.emit(f'ctx->ret_ip = {self.rd(ins_[0])}; return;')
         elif m == 'CALLOTHER':
             self.userop(a, op, o, ins_)
         elif m in BINOP:
@@ -495,7 +554,7 @@ class FunctionTranslator:
         elif m == 'FLOAT2FLOAT':
             self.wrf(o, self.rdf(ins_[0]))
         elif m == 'TRUNC':
-            self.wr(o, f'f2i{o.getSize() * 8}({self.rdf(ins_[0])})')
+            self.wr(o, f'f2i{min(o.getSize(), 8) * 8}({self.rdf(ins_[0])})')
         elif m == 'ROUND':
             self.wrf(o, f'nearbyint({self.rdf(ins_[0])})')
         elif m == 'FLOAT_FLOOR':
@@ -546,6 +605,8 @@ class FunctionTranslator:
             # the generated code a manageable size
             for t in sorted(self.insn_addrs):
                 self.labels_used.add(f'L_{t:08x}')
+        if self.resumable:
+            out.append('    if (ctx->resume_ip) { t_dispatch = ctx->resume_ip; ctx->resume_ip = 0; goto L_dispatch; }')
         if self.entry in self.insn_addrs:
             out.append(f'    goto L_{self.entry:08x};')
         else:  # Ghidra has no instruction at the entry (a stray 1-byte function)
@@ -570,6 +631,18 @@ class FunctionTranslator:
         return '\n'.join(out)
 
 
+EXTRA_RESUMABLE = set()  # docs/recomp/resumable-functions.txt
+
+
+def load_resumable():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'docs', 'recomp', 'resumable-functions.txt')
+    if os.path.exists(path):
+        for line in open(path):
+            word = line.split('#')[0].split()
+            if len(word) == 1 and word[0].startswith('0x'):
+                EXTRA_RESUMABLE.add(int(word[0], 16))
+
+
 def load_hooks(path):
     """hooks.csv: address,name -> functions the host runtime implements as hook_<name>."""
     hooks = {}
@@ -584,6 +657,7 @@ def load_hooks(path):
 
 def main(project_dir, out_dir, select='leaf', hooks_path=None):
     hooks = load_hooks(hooks_path)
+    load_resumable()
     project = GhidraProject.openProject(project_dir, 'obiwan', False)
     program = project.openProgram('/', PROGRAM, False)
     tx = program.startTransaction('translate (scratch, never saved)')
@@ -644,6 +718,14 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
                 return False
         return bool(CreateFunctionCmd(addr).applyTo(program, TaskMonitor.DUMMY))
 
+    # docs/recomp/extra-functions.txt: entry points found by hand (e.g. CRT
+    # functions reached through pointers pushed as immediates)
+    extra = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'docs', 'recomp', 'extra-functions.txt')
+    if os.path.exists(extra):
+        for line in open(extra):
+            word = line.split('#')[0].split()
+            if len(word) == 1 and word[0].startswith('0x'):
+                pointer_targets.add(space.getAddress(int(word[0], 16)))
     for addr in pointer_targets:
         if make_function(addr):
             created += 1
@@ -725,6 +807,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     for a, name in hooks.items():
         meta.setdefault(a, {'name': name, 'status': 'hook', 'block': '', 'features': {}})
 
+    extent = {}  # address -> (first, last instruction address, resumable)
     os.makedirs(out_dir, exist_ok=True)
     for old in os.listdir(out_dir):
         if old.startswith('funcs_') and old.endswith('.c'):
@@ -738,10 +821,15 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
                 if a in hooks:
                     # the host runtime provides this one; keep the symbol so direct calls link
                     out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
+                    extent[a] = (a, a, False)
                     continue
                 try:
-                    code = FunctionTranslator(program, ok[a], known).translate()
+                    t = FunctionTranslator(program, ok[a], known)
+                    code = t.translate()
+                    extent[a] = (min(t.insn_addrs), max(t.insn_addrs), t.resumable)
+                    meta[a]['resumable'] = t.resumable
                 except Exception as e:  # noqa: BLE001 - keep the build consistent
+                    extent[a] = (a, a, False)
                     print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
                     meta[a]['status'] = f'emit failed: {e}'
                     code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {meta[a]["name"]}: {e} */' + '\n'
@@ -786,7 +874,8 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     with open(os.path.join(out_dir, 'functab.c'), 'w') as out:
         out.write('#include "guest.h"\n#include "funcs.h"\n\nconst FuncEntry g_functab[] = {\n')
         for a in chosen:
-            out.write(f'    {{0x{a:08x}u, f_{a:08x}, "{meta[a]["name"]}"}},\n')
+            lo, hi, res = extent[a]
+            out.write(f'    {{0x{a:08x}u, f_{a:08x}, "{meta[a]["name"]}", 0x{lo:08x}u, 0x{hi:08x}u, {int(res)}}},\n')
         out.write('};\nconst unsigned g_functab_count = sizeof(g_functab) / sizeof(g_functab[0]);\n')
     statuses = collections.Counter(m['status'] for m in meta.values())
     summary = {'functions': len(meta), 'translated': len(ok), 'emitted': len(chosen), 'hooked': len(hooks),
