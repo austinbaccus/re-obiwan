@@ -31,7 +31,9 @@ import sys
 import pyghidra
 
 pyghidra.start()
+from ghidra.app.cmd.disassemble import DisassembleCommand  # noqa: E402
 from ghidra.base.project import GhidraProject  # noqa: E402
+from ghidra.util.task import TaskMonitor  # noqa: E402
 
 PROGRAM = 'default.xbe-076e14'
 FS_OFFSET = 0x110
@@ -218,7 +220,25 @@ class FunctionTranslator:
         tail calls) gives every block this function can reach.
         """
         listing, fm = self.program.getListing(), self.program.getFunctionManager()
-        start = listing.getInstructionAt(self.space_.getAddress(self.entry))
+        memory = self.program.getMemory()
+
+        def ins_at(addr):
+            # flow can land on bytes Ghidra never disassembled; do it now (the
+            # project is a scratch copy opened for writing and never saved)
+            ins = listing.getInstructionAt(addr)
+            if ins is None:
+                block = memory.getBlock(addr)
+                if block is not None and block.isExecute() and listing.getDefinedDataAt(addr) is None:
+                    # a mis-decoded instruction may start inside the real one
+                    # (Ghidra decoded from the wrong byte); clear it first
+                    listing.clearCodeUnits(addr, addr.add(15), False)
+                    DisassembleCommand(addr, None, True).applyTo(self.program, TaskMonitor.DUMMY)
+                    ins = listing.getInstructionAt(addr)
+                    if ins is not None:
+                        self.features['redisassembled'] += 1
+            return ins
+
+        start = ins_at(self.space_.getAddress(self.entry))
         if start is None:
             return []
         seen, order, work = set(), [], [start]
@@ -231,7 +251,7 @@ class FunctionTranslator:
             order.append(ins)
             ft = ins.getFallThrough()
             if ft is not None:
-                nxt = listing.getInstructionAt(ft)
+                nxt = ins_at(ft)
                 if nxt is not None:
                     work.append(nxt)
             flow = ins.getFlowType()
@@ -240,7 +260,7 @@ class FunctionTranslator:
                     to = t.getOffset()
                     if to == self.entry or fm.getFunctionAt(t) is not None:
                         continue  # a jump to a function entry stays a tail call
-                    nxt = listing.getInstructionAt(t)
+                    nxt = ins_at(t)
                     if nxt is not None:
                         work.append(nxt)
         order.sort(key=lambda i: i.getAddress().getOffset())
@@ -500,7 +520,8 @@ def load_hooks(path):
 def main(project_dir, out_dir, select='leaf', hooks_path=None):
     hooks = load_hooks(hooks_path)
     project = GhidraProject.openProject(project_dir, 'obiwan', False)
-    program = project.openProgram('/', PROGRAM, True)
+    program = project.openProgram('/', PROGRAM, False)
+    tx = program.startTransaction('translate (scratch, never saved)')
     fm, memory = program.getFunctionManager(), program.getMemory()
     funcs = [f for f in fm.getFunctions(True)
              if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
@@ -590,6 +611,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     json.dump({'summary': summary, 'functions': {f'0x{a:08x}': m for a, m in meta.items()}},
               open(os.path.join(out_dir, 'meta.json'), 'w'), indent=1)
     print(json.dumps(summary, indent=1))
+    program.endTransaction(tx, False)
     project.close()
 
 

@@ -4,3 +4,6 @@
 0x0002e090  # XapiThreadStartup (SystemRoutine of every XAPI thread)
 # CRT initializer tables walked by _rtinit / _cinit (see code-map.md)
 table 0x00422ba0 0x00425ae4
+# function pointers taken by value (mov reg, imm / push imm)
+scan immediates
+0x002cac30

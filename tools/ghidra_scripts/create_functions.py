@@ -1,7 +1,9 @@
 """Create functions at the addresses listed in docs/recomp/extra-functions.txt.
 
-A line `table <start> <end>` creates a function at every .text address a
-pointer in that range points to (initializer tables, callback tables).
+A line `table <start> <end>` creates a function at every code address a
+pointer in that range points to (initializer tables, callback tables), and
+`scan immediates` does the same for code addresses used as instruction
+immediates (function pointers taken by value).
 
 Ghidra only finds code it can reach; thread entry points and callbacks that
 are passed as data (the first thread's start routine, XapiThreadStartup)
@@ -24,12 +26,14 @@ PROGRAM = 'default.xbe-076e14'
 
 
 def main(project_dir, list_path):
-    addrs, tables = [], []
+    addrs, tables, scan_immediates = [], [], False
     for line in open(list_path):
         line = line.split('#')[0].strip()
         if line.startswith('table '):
             _, lo, hi = line.split()
             tables.append((int(lo, 16), int(hi, 16)))
+        elif line == 'scan immediates':
+            scan_immediates = True
         elif line:
             addrs.append(int(line, 16))
     project = GhidraProject.openProject(project_dir, 'obiwan', False)
@@ -43,6 +47,32 @@ def main(project_dir, list_path):
             v = memory.getInt(space.getAddress(a)) & 0xFFFFFFFF
             if v not in (0, 0xFFFFFFFF) and any(b.contains(space.getAddress(v)) for b in code_blocks):
                 addrs.append(v)
+    if scan_immediates:
+        # Function pointers taken by value (`mov reg, imm`, `push imm`): accept an
+        # address in code that is not already inside a function and whose
+        # preceding byte ends a function (ret, jmp, int3 or nop padding), so a
+        # stray constant cannot split a real function.
+        ends = {0xC3, 0xC2, 0xCC, 0x90, 0xE9, 0xEB, 0x00}
+        found = 0
+        for ins in listing.getInstructions(True):
+            for i in range(ins.getNumOperands()):
+                for obj in ins.getOpObjects(i):
+                    if not hasattr(obj, 'getUnsignedValue'):
+                        continue
+                    v = obj.getUnsignedValue()
+                    if v < 0x1000 or v > 0xFFFFFFFF:
+                        continue
+                    t = space.getAddress(v)
+                    if not any(b.contains(t) for b in code_blocks) or fm.getFunctionContaining(t) is not None:
+                        continue
+                    prev = memory.getByte(t.subtract(1)) & 0xFF
+                    # ret imm16 is 3 bytes: the byte before is part of the immediate
+                    prev3 = memory.getByte(t.subtract(3)) & 0xFF
+                    if prev in ends or prev3 == 0xC2:
+                        addrs.append(v)
+                        found += 1
+        print(f'immediates: {found} candidate entry points')
+
     tx = program.startTransaction('Create extra functions')
     created = 0
     try:
