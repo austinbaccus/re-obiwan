@@ -25,18 +25,32 @@ from ghidra.base.project import GhidraProject  # noqa: E402
 PROGRAM = 'default.xbe-076e14'
 
 
+LIB_SECTIONS = ('D3D', 'D3DX', 'XGRPH', 'DSOUND', 'XPP')
+# Library ranges inside .text, from docs/recomp/code-map.md (start, end exclusive).
+TEXT_RANGES = [
+    (0x0002A6D6, 0x0002EB60, 'xdk'),   # XAPILIB
+    (0x002CBD20, 0x002DE752, 'crt'),
+    (0x002DE752, 0x002E0A00, 'xdk'),   # XAPILIB + D3DX math
+    (0x00320A10, 0x00320EEC, 'crt'),
+]
+
+
 def classify(f, section):
     ns = f.getParentNamespace()
     name = f.getName()
-    if not ns.isGlobal():
-        return 'xboxkrnl' if ns.getName() == 'xboxkrnl.exe' else 'xdk'
+    entry = f.getEntryPoint().getOffset()
+    if not ns.isGlobal() and ns.getName(True).split('::')[0] == 'xboxkrnl.exe':
+        return 'xboxkrnl'
+    if section in LIB_SECTIONS:
+        return 'xdk'
+    for lo, hi, cls in TEXT_RANGES:
+        if lo <= entry < hi:
+            return cls
     if f.isThunk() and name.startswith('thunk_FUN_'):
         return 'thunk'
-    if not name.startswith('FUN_'):
-        return 'crt'  # FID / analysis-named MSVC runtime (LIBC, LIBCPMT, undname)
-    if section in ('D3D', 'D3DX', 'XGRPH', 'DSOUND', 'XPP'):
-        return 'xdk'  # unnamed helper inside a library section
-    return 'unknown'
+    if ns.isGlobal() and not name.startswith('FUN_') and f.getSymbol().getSource().toString() == 'ANALYSIS':
+        return 'crt'  # Function ID match outside the main CRT ranges
+    return 'unknown'  # game code, including RTTI-named Class::vfNN
 
 
 def main(project_dir, out_path):

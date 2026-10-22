@@ -1,0 +1,41 @@
+address,name,library,evidence
+0x002cf37c,__RTtypeid,CRT,typeid(); "Attempted a typeid of NULL pointer!"
+0x002cf01a,type_info::operator==,CRT,compares decorated names at +9
+0x002cf059,type_info::operator!=,CRT,negated twin of operator==
+0x002d1263,type_info::name,CRT,undecorates +9 into a cached malloc'd string
+0x002cf7af,__RTDynamicCast,CRT,"Bad dynamic_cast!"; walks the class hierarchy descriptor
+0x002cfd19,_CxxThrowException,CRT,copies the C++ exception record template and calls RaiseException
+0x002d0f84,_ftol,CRT,x87 ST0 to 64-bit integer with truncation fix-up
+0x002d0440,_alloca_probe,CRT,stack probe taking the size in EAX
+0x002cf117,_sprintf,CRT,string FILE with count 0x7fffffff over the output formatter
+0x002d01ab,_fprintf,CRT,locks the FILE and runs the output formatter (FID could not choose fprintf/fwprintf)
+0x002d0265,_fopen,CRT,_fsopen(name, mode, _SH_DENYNO)
+0x002d0382,_atof,CRT,skips spaces then converts to double
+0x002d08f0,_strstr,CRT,word-at-a-time substring search
+0x002d1330,_strchr,CRT,word-at-a-time character search
+0x00369120,D3DDevice_SetTextureStageStateDeferred,D3D8,writes D3D_g_DeferredTextureState[stage*32+state] and the dirty mask
+0x0002a99e,SleepEx,XAPILIB,KeDelayExecutionThread loop restarting on STATUS_ALERTED
+0x0002a9f0,Sleep,XAPILIB,SleepEx(ms, FALSE)
+0x0002a9fe,SetFileAttributesA,XAPILIB,NtOpenFile + NtSetInformationFile(FileBasicInformation)
+0x0002ab32,XSetFileCacheSize,XAPILIB,FscSetCacheSize(bytes rounded up to pages)
+0x0002ab5e,XPhysicalAlloc,XAPILIB,MmAllocateContiguousMemoryEx wrapper
+0x0002abc4,GetProcessHeap,XAPILIB,returns the heap XapiInitProcess created
+0x0002ae13,CreateFileA,XAPILIB,maps Win32 disposition/flags to NtCreateFile
+0x0002dee2,CloseHandle,XAPILIB,NtClose + XapiSetLastNTError
+0x002de90d,XCalculateSignatureUpdate,XAPILIB,XcSHAUpdate on the signature context
+0x002de927,XCalculateSignatureEnd,XAPILIB,finishes the SHA and HMACs it for save signing
+0x002df39a,GetTickCount,XAPILIB,returns KeTickCount
+0x002df482,CompareFileTime,XAPILIB,64-bit compare returning -1/0/1
+0x002dfa19,FindNextFileA,XAPILIB,NtQueryDirectoryFile on the find handle
+0x002dfa6a,QueryPerformanceCounter,XAPILIB,KeQueryPerformanceCounter
+0x002dfa7f,QueryPerformanceFrequency,XAPILIB,KeQueryPerformanceFrequency
+0x002dfdd5,GetFileTime,XAPILIB,NtQueryInformationFile(FileNetworkOpenInformation)
+0x002dfef1,GetFileSize,XAPILIB,returns low part and optional high part
+0x002dff2c,CreateDirectoryA,XAPILIB,NtCreateFile with FILE_CREATE and FILE_DIRECTORY_FILE
+0x002e02f2,D3DXMatrixMultiply,D3DX8,4x4 float matrix product
+0x002e03f0,D3DXMatrixTranspose,D3DX8,swaps off-diagonal elements
+0x002e045d,D3DXMatrixInverse,D3DX8,cofactor inverse with optional determinant out
+0x002e07ea,D3DXMatrixScaling,D3DX8,diagonal sx sy sz 1
+0x002e0846,D3DXMatrixTranslation,D3DX8,identity with row 3 = x y z
+0x002e08a2,D3DXMatrixPerspectiveFovLH,D3DX8,cot(fov/2) with zf/(zf-zn)
+0x002e0936,D3DXMatrixOrthoOffCenterLH,D3DX8,2/(r-l) and 1/(zf-zn)
