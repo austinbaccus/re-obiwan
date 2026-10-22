@@ -621,22 +621,22 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             created += 1
     print(f'created {created} functions for library code pointers in data', file=sys.stderr)
 
-    for _round in range(8):
-        missing = set()
-        for ins in listing.getInstructions(True):
-            if ins.getFlowType().isCall():
-                for flow in ins.getFlows():
-                    if fm.getFunctionAt(flow) is None and any(b.contains(flow) for b in code_blocks):
-                        missing.add(flow)
-        if not missing:
-            break
-        made = 0
-        for addr in missing:
-            if make_function(addr):
-                made += 1
-        created += made
-        if not made:
-            break
+    def call_target_closure():
+        made_total = 0
+        for _round in range(8):
+            missing = set()
+            for ins in listing.getInstructions(True):
+                if ins.getFlowType().isCall():
+                    for flow in ins.getFlows():
+                        if fm.getFunctionAt(flow) is None and any(b.contains(flow) for b in code_blocks):
+                            missing.add(flow)
+            made = sum(1 for addr in missing if make_function(addr))
+            made_total += made
+            if not made:
+                break
+        return made_total
+
+    created += call_target_closure()
     if created:
         print(f'created {created} functions for direct-call targets', file=sys.stderr)
 
@@ -648,22 +648,35 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         explicit = {int(x, 16) for x in open(select).read().split()}
 
     # First pass: translate everything (with an empty `known` set) to gather
-    # coverage and features, then emit the selected set.
+    # coverage and features, then emit the selected set. Translating
+    # disassembles code on demand, which can expose calls to functions that
+    # did not exist yet, so repeat the closure and the pass until it settles.
     meta, ok = {}, {}
-    for f in funcs:
-        a = f.getEntryPoint().getOffset()
-        t = FunctionTranslator(program, f, set())
-        try:
-            code = t.translate()
-            status = 'ok'
-        except Unsupported as e:
-            code, status = None, f'unsupported: {e}'
-        except Exception as e:  # noqa: BLE001 - keep going and report
-            code, status = None, f'error: {e}'
-        meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
-                   'features': dict(t.features)}
-        if code is not None:
-            ok[a] = f
+    done = set()
+    for _round in range(4):
+        for f in funcs:
+            a = f.getEntryPoint().getOffset()
+            if a in done:
+                continue
+            done.add(a)
+            t = FunctionTranslator(program, f, set())
+            try:
+                code = t.translate()
+                status = 'ok'
+            except Unsupported as e:
+                code, status = None, f'unsupported: {e}'
+            except Exception as e:  # noqa: BLE001 - keep going and report
+                code, status = None, f'error: {e}'
+            meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
+                       'features': dict(t.features)}
+            if code is not None:
+                ok[a] = f
+        more = call_target_closure()
+        if not more:
+            break
+        print(f'round {_round + 1}: {more} more functions found by disassembling on demand', file=sys.stderr)
+        funcs = [f for f in fm.getFunctions(True)
+                 if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
 
     def is_leaf(a):
         ft = meta[a]['features']
