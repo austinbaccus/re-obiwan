@@ -27,11 +27,14 @@ uint32_t make_object(uint32_t iface, uint32_t size) {
     return o;
 }
 
-/* Xbox IDirectSound / IDirectSoundStream / IDirectSoundBuffer vtables: slot
-   -> stdcall argument count (including this). Unknown slots trap. */
-static const int8_t dsound_nargs[] = {1, 1, 2, 4, 4, 2, 3, 1, 5, 5, 5, 1, 2, 3, 3, 3, 3, 3, 3, 8, 5, 5, 1, 2, 3, 1};
-static const int8_t stream_nargs[] = {1, 1, 2, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 3};
-static const int8_t buffer_nargs[] = {1, 1, 2, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 3};
+/* Pop counts (dwords the original slot function pops on return) of the real
+   DSOUND vtables in this image, read from the library: most methods are
+   __thiscall (this in ECX, only stack arguments popped), AddRef/Release are
+   stdcall. Stream = vtable at 0x3E69C0 (DirectSoundCreateStream objects),
+   dsound = 0x3E6A68, buffer = 0x3E6A84 (tentative identification). */
+static const int8_t dsound_pops[] = {1, 1, 0, 2, 0, 2, 1};
+static const int8_t stream_pops[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 1, 1, 1};
+static const int8_t buffer_pops[] = {1, 1, 0, 2, 0, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 2, 3, 3};
 static const int8_t xgbuffer_nargs[] = {1, 1, 1, 1};
 
 /* XGBUFFER object: +8 data pointer, +12 size */
@@ -56,26 +59,30 @@ void host_vcall(Ctx *ctx, uint32_t id) {
         RET_STDCALL(ctx, xgbuffer_nargs[slot]);
         return;
     }
-    const int8_t *tab = iface == IFACE_DSOUND ? dsound_nargs : iface == IFACE_STREAM ? stream_nargs : buffer_nargs;
-    size_t n = iface == IFACE_DSOUND ? sizeof dsound_nargs : iface == IFACE_STREAM ? sizeof stream_nargs : sizeof buffer_nargs;
+    const int8_t *tab = iface == IFACE_DSOUND ? dsound_pops : iface == IFACE_STREAM ? stream_pops : buffer_pops;
+    size_t n = iface == IFACE_DSOUND ? sizeof dsound_pops : iface == IFACE_STREAM ? sizeof stream_pops : sizeof buffer_pops;
     if (slot >= n) {
         fprintf(stderr, "dsound: unknown vtable slot %u on interface %u\n", slot, iface);
         rt_trap(ctx, TRAP_UNSUPPORTED, id);
     }
-    trace("dsound: iface %u slot %u (%d args)", iface, slot, tab[slot]);
+    int pops = tab[slot];
+    /* stack arguments: for the stdcall AddRef/Release the first is `this`,
+       for __thiscall methods `this` is in ECX and ARG(0) is the first argument */
+    uint32_t a0 = ARG(ctx, 0), a1 = ARG(ctx, 1);
+    trace("dsound: iface %u slot %u (pops %d)", iface, slot, pops);
     uint32_t result = 0;
     if (slot == 0) result = 2;      /* AddRef */
     else if (slot == 1) result = 1; /* Release: never destroy */
-    else if (iface == IFACE_DSOUND && (slot == 3 || slot == 4)) {
-        /* CreateSoundBuffer / CreateSoundStream (pDesc, ppObject, pUnkOuter) */
-        uint32_t pp = ARG(ctx, 2);
-        if (pp) WR32(MEM(pp), make_object(slot == 3 ? IFACE_BUFFER : IFACE_STREAM, 0x100));
-    } else if (iface == IFACE_BUFFER && slot == 8) {
-        /* GetStatus(pdwStatus) */
-        if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), 0);
+    else if (iface == IFACE_STREAM) {
+        if (slot == 10 && a0) memset(MEM(a0), 0, 16);   /* GetInfo(pInfo) */
+        else if (slot == 11 && a0) WR32(MEM(a0), 0);    /* GetStatus(pdwStatus): idle */
+        /* Process(pInput, pOutput), Discontinuity, Flush, ...: nothing to do */
+    } else if (iface == IFACE_BUFFER) {
+        if (slot == 3 && a1) WR32(MEM(a1), 0);          /* a (this, out*) getter: report 0 */
     }
+    (void)a1;
     SET_EAX(ctx, result);
-    RET_STDCALL(ctx, tab[slot]);
+    RET_STDCALL(ctx, pops);
 }
 
 HOOK(DirectSoundCreate) {
