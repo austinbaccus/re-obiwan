@@ -94,3 +94,5 @@
 0x003abb69,IDirectSound_SetOrientation
 0x003abbb3,IDirectSound_SetPosition
 0x003abbe8,IDirectSound_SetVelocity
+# XGraphics shader assembler (STL + C++ exceptions inside; the output is only fed back to D3D)
+0x0039ea9a,XGAssembleShader

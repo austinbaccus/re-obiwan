@@ -52,7 +52,7 @@ HOOK(XInputOpen) {
 HOOK(XInputClose) { RET(0, 1); }
 HOOK(XInputGetCapabilities) {
     uint32_t caps = ARG(ctx, 1);
-    memset(MEM(caps), 0, 0x20);
+    memset(MEM(caps), 0, 0x1c); /* XINPUT_CAPABILITIES: SubType, Reserved, In (gamepad), Out (rumble) */
     WR8(MEM(caps), 1);      /* SubType: XINPUT_DEVSUBTYPE_GC_GAMEPAD */
     WR16(MEM(caps + 4), 0xffff); /* In.Gamepad.wButtons: all supported */
     RET(0, 2);

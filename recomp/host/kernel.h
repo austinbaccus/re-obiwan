@@ -41,6 +41,7 @@ void kmem_init(uint32_t start, uint32_t size);
 uint32_t kmem_alloc(uint32_t size, uint32_t align);   /* never fails: traps */
 void kmem_free(uint32_t addr);
 uint32_t kmem_block_size(uint32_t addr);
+uint32_t kmem_block_containing(uint32_t addr);
 
 /* Patch the thunk table in the loaded image and set up the object namespace. */
 void kernel_prepare_threads(void); /* before the XBE is loaded */

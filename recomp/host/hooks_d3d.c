@@ -11,6 +11,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "funcs.h"
 #include "kernel.h"
@@ -108,6 +109,7 @@ HOOK(Direct3D_CreateDevice) {
     if (ppdevice) WR32(MEM(ppdevice), g_device);
     for (int i = 0; i < 512; i++) { memset(g_transforms[i], 0, 64); g_transforms[i][0] = g_transforms[i][5] = g_transforms[i][10] = g_transforms[i][15] = 1.0f; }
     fprintf(stderr, "d3d: device created, %ux%u back buffer\n", w, h);
+    if (getenv("RECOMP_TRACE_FROM_D3D")) g_trace_calls = 2; /* debugging aid: full call trace from here on */
     RET(Direct3D_CreateDevice, 0);
 }
 HOOK(D3D_GetAdapterDisplayMode) {
@@ -184,6 +186,24 @@ HOOK(D3DDevice_DrawVertices) { RET(D3DDevice_DrawVertices, 0); }
 HOOK(D3DDevice_DrawVerticesUP) { RET(D3DDevice_DrawVerticesUP, 0); }
 HOOK(D3DDevice_DrawIndexedVertices) { RET(D3DDevice_DrawIndexedVertices, 0); }
 HOOK(D3DDevice_DrawIndexedVerticesUP) { RET(D3DDevice_DrawIndexedVerticesUP, 0); }
+
+/* ---- XGraphics shader assembler ---------------------------------------- */
+uint32_t make_xgbuffer(uint32_t size); /* hooks_dsound.c */
+
+/* XGAssembleShader(pSrcName, pSrcData, SrcDataLen, Flags, ppConstants,
+   ppCompiledShader, ppErrorLog, ppShaderType, ...): the game assembles its
+   pixel shaders from source at startup. Nothing is drawn yet, so hand back
+   an empty D3DPIXELSHADERDEF-sized buffer and no constants or errors. */
+HOOK(XGAssembleShader) {
+    const char *name = ARG(ctx, 0) ? (const char *)MEM(ARG(ctx, 0)) : "?";
+    uint32_t pp_const = ARG(ctx, 4), pp_shader = ARG(ctx, 5), pp_err = ARG(ctx, 6), pp_type = ARG(ctx, 7);
+    trace("XGAssembleShader %s (%u bytes of source, flags %08x)", name, ARG(ctx, 2), ARG(ctx, 3));
+    if (pp_const) WR32(MEM(pp_const), 0);
+    if (pp_shader) WR32(MEM(pp_shader), make_xgbuffer(0xA4));
+    if (pp_err) WR32(MEM(pp_err), 0);
+    if (pp_type) WR32(MEM(pp_type), 0);
+    RET(XGAssembleShader, 0);
+}
 
 /* ---- resources ----------------------------------------------------------- */
 HOOK(D3DDevice_CreateTexture) {

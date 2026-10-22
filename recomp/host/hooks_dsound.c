@@ -17,8 +17,9 @@
 #define IFACE_DSOUND 1
 #define IFACE_STREAM 2
 #define IFACE_BUFFER 3
+#define IFACE_XGBUFFER 4 /* XGAssembleShader output: AddRef, Release, GetBufferPointer, GetBufferSize */
 
-static uint32_t make_object(uint32_t iface, uint32_t size) {
+uint32_t make_object(uint32_t iface, uint32_t size) {
     uint32_t vt = kmem_alloc(64 * 4, 16), o = kmem_alloc(size, 16);
     for (uint32_t i = 0; i < 64; i++) WR32(MEM(vt + 4 * i), VCALL_BASE | (iface << 8) | i);
     WR32(MEM(o), vt);
@@ -31,9 +32,30 @@ static uint32_t make_object(uint32_t iface, uint32_t size) {
 static const int8_t dsound_nargs[] = {1, 1, 2, 4, 4, 2, 3, 1, 5, 5, 5, 1, 2, 3, 3, 3, 3, 3, 3, 8, 5, 5, 1, 2, 3, 1};
 static const int8_t stream_nargs[] = {1, 1, 2, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 3};
 static const int8_t buffer_nargs[] = {1, 1, 2, 3, 3, 3, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 2, 2, 2, 3};
+static const int8_t xgbuffer_nargs[] = {1, 1, 1, 1};
+
+/* XGBUFFER object: +8 data pointer, +12 size */
+uint32_t make_xgbuffer(uint32_t size) {
+    uint32_t o = make_object(IFACE_XGBUFFER, 0x20);
+    WR32(MEM(o + 8), kmem_alloc(size ? size : 16, 16));
+    WR32(MEM(o + 12), size);
+    return o;
+}
 
 void host_vcall(Ctx *ctx, uint32_t id) {
     uint32_t iface = (id >> 8) & 0xff, slot = id & 0xff;
+    if (iface == IFACE_XGBUFFER) {
+        uint32_t self = ARG(ctx, 0), r = 0;
+        if (slot >= sizeof xgbuffer_nargs) rt_trap(ctx, TRAP_UNSUPPORTED, id);
+        if (slot == 0) r = 2;
+        else if (slot == 1) r = 1;
+        else if (slot == 2) r = RD32(MEM(self + 8));
+        else if (slot == 3) r = RD32(MEM(self + 12));
+        trace("xgbuffer slot %u -> %08x", slot, r);
+        SET_EAX(ctx, r);
+        RET_STDCALL(ctx, xgbuffer_nargs[slot]);
+        return;
+    }
     const int8_t *tab = iface == IFACE_DSOUND ? dsound_nargs : iface == IFACE_STREAM ? stream_nargs : buffer_nargs;
     size_t n = iface == IFACE_DSOUND ? sizeof dsound_nargs : iface == IFACE_STREAM ? sizeof stream_nargs : sizeof buffer_nargs;
     if (slot >= n) {
@@ -75,7 +97,8 @@ HOOK(IDirectSoundBuffer_Release) { RET(IDirectSoundBuffer_Release, 0); }
 HOOK(IDirectSoundStream_Pause) { RET(IDirectSoundStream_Pause, 0); }
 HOOK(IDirectSound_GetCaps) {
     uint32_t pcaps = ARG(ctx, 1);
-    if (pcaps) { memset(MEM(pcaps), 0, 0x14); WR32(MEM(pcaps + 4), 1024 * 1024); WR32(MEM(pcaps + 8), 1024 * 1024); }
+    /* DSCAPS: dwFree2DBuffers, dwFree3DBuffers, dwFreeBufferSGEs, dwMemoryAllocated */
+    if (pcaps) { WR32(MEM(pcaps), 256); WR32(MEM(pcaps + 4), 256); WR32(MEM(pcaps + 8), 1024); WR32(MEM(pcaps + 12), 0); }
     RET(IDirectSound_GetCaps, 0);
 }
 HOOK(IDirectSound_DownloadEffectsImage) {

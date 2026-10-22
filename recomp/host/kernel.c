@@ -236,6 +236,17 @@ uint32_t kmem_block_size(uint32_t addr) {
     return b ? b->size - b->used : 0;
 }
 
+/* Payload start of the allocated block containing addr, or 0. */
+uint32_t kmem_block_containing(uint32_t addr) {
+    uint32_t a = arena_start;
+    while (a < arena_end) {
+        Block *b = (Block *)MEM(a);
+        if (b->used && a + b->used <= addr && addr < a + b->size) return a + b->used;
+        a += b->size;
+    }
+    return 0;
+}
+
 /* ---- objects and handles ------------------------------------------------ */
 typedef enum { OBJ_FREE, OBJ_FILE, OBJ_DIR, OBJ_EVENT, OBJ_THREAD, OBJ_SYMLINK } ObjKind;
 typedef struct {
@@ -498,17 +509,28 @@ static uint32_t g_tick_count_addr, g_hardware_info_addr, g_launch_data_page_addr
 K(NtAllocateVirtualMemory) {
     uint32_t pbase = ARG(ctx, 0), zero_bits = ARG(ctx, 1), psize = ARG(ctx, 2), type = ARG(ctx, 3), prot = ARG(ctx, 4);
     (void)zero_bits; (void)prot;
-    uint32_t base = RD32(MEM(pbase)), size = RD32(MEM(psize));
+    uint32_t base = RD32(MEM(pbase)), size = RD32(MEM(psize)), requested = base;
     size = (size + 0xfff) & ~0xfffu;
     if (!base) {
         /* MEM_RESERVE and MEM_COMMIT both get real memory; committing or
            reserving inside an earlier range is a no-op (identity mapping) */
         base = kmem_alloc(size, 4096);
         if (!base) RET(STATUS_NO_MEMORY_, 5);
+    } else {
+        base &= ~0xfffu;
+        uint32_t blk = kmem_block_containing(base);
+        if (!blk || base + size > blk + kmem_block_size(blk)) {
+            if (blk) { /* commit past the end of the reservation: grow by moving? we cannot; refuse */
+                trace("NtAllocateVirtualMemory: %08x+%x exceeds its reservation (%08x+%x)", base, size, blk, kmem_block_size(blk));
+            } else {
+                trace("NtAllocateVirtualMemory: %08x is not inside any reservation", base);
+            }
+            RET((NTSTATUS_)0xC0000018 /* STATUS_CONFLICTING_ADDRESSES */, 5);
+        }
     }
     WR32(MEM(pbase), base);
     WR32(MEM(psize), size);
-    trace("NtAllocateVirtualMemory -> %08x size %x type %x", base, size, type);
+    trace("NtAllocateVirtualMemory(%08x) -> %08x size %x type %x", requested, base, size, type);
     RET(STATUS_SUCCESS_, 5);
 }
 K(NtFreeVirtualMemory) {
@@ -962,7 +984,18 @@ K(NtQueryInformationFile) {
     case 5:  WR64(MEM(info), (uint64_t)size.QuadPart); WR64(MEM(info + 8), (uint64_t)size.QuadPart);
              WR32(MEM(info + 16), 1); WR8(MEM(info + 20), 0); WR8(MEM(info + 21), o->kind == OBJ_DIR); written = 24; break; /* FileStandardInformation */
     case 14: WR64(MEM(info), (uint64_t)pos.QuadPart); written = 8; break;       /* FilePositionInformation */
-    case 4:  fill_network_open_info(o, info); WR32(MEM(info + 32), 0x80); written = 0x28; break; /* FileBasicInformation (times + attrs) */
+    case 4: { /* FileBasicInformation: 4 times + attributes = 0x28 bytes */
+        uint8_t tmp[0x38];
+        uint32_t save = kmem_alloc(0x38, 16);
+        fill_network_open_info(o, save);
+        memcpy(tmp, MEM(save), 0x38);
+        kmem_free(save);
+        memcpy(MEM(info), tmp, 32);
+        WR32(MEM(info + 32), RD32((uint8_t *)tmp + 48));
+        WR32(MEM(info + 36), 0);
+        written = 0x28;
+        break;
+    }
     default: trace("NtQueryInformationFile class %u not handled", cls); st = STATUS_NOT_IMPLEMENTED_; break;
     }
     (void)len;

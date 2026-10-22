@@ -591,11 +591,23 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
         outside Ghidra's body for the function."""
         if f is None:
             return None
-        t = FunctionTranslator(program, f, set())
-        t.space_ = program.getAddressFactory().getDefaultAddressSpace()
-        for ins in t.collect_insns():
-            if ins.getMnemonicString().upper() == 'RET':
-                return ins.getNumOperands() and int(ins.getScalar(0).getUnsignedValue()) or 0
+        seen = set()
+        while f is not None and f.getEntryPoint().getOffset() not in seen:
+            seen.add(f.getEntryPoint().getOffset())
+            t = FunctionTranslator(program, f, set())
+            t.space_ = program.getAddressFactory().getDefaultAddressSpace()
+            insns = t.collect_insns()
+            for ins in insns:
+                if ins.getMnemonicString().upper() == 'RET':
+                    return ins.getNumOperands() and int(ins.getScalar(0).getUnsignedValue()) or 0
+            # no ret of its own: a thunk that tail-jumps into another function
+            nxt = None
+            for ins in insns:
+                if ins.getFlowType().isJump():
+                    for flow in ins.getFlows():
+                        if fm.getFunctionAt(flow) is not None:
+                            nxt = fm.getFunctionAt(flow)
+            f = nxt
         return 0
 
     with open(os.path.join(out_dir, 'funcs.h'), 'w') as out:
