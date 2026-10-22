@@ -11,6 +11,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -127,6 +128,15 @@ static uint32_t new_pixel_container(uint32_t type, uint32_t w, uint32_t h, uint3
 }
 
 /* ---- device ------------------------------------------------------------- */
+/* The device keeps the viewport at +0xB00 (X, Y, Width, Height, MinZ, MaxZ),
+   as D3DDevice_SetViewport (0x36aaf0) stores it; D3D's state snapshots
+   (0x36b580) and so the game read it from there. */
+static void store_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz, float maxz) {
+    WR32(MEM(g_device + 0xB00), x); WR32(MEM(g_device + 0xB04), y);
+    WR32(MEM(g_device + 0xB08), w); WR32(MEM(g_device + 0xB0C), h);
+    memcpy(MEM(g_device + 0xB10), &minz, 4); memcpy(MEM(g_device + 0xB14), &maxz, 4);
+}
+
 HOOK(Direct3D_CreateDevice) {
     uint32_t pparams = ARG(ctx, 4), ppdevice = ARG(ctx, 5);
     uint32_t w = pparams ? RD32(MEM(pparams)) : 640, h = pparams ? RD32(MEM(pparams + 4)) : 480;
@@ -138,6 +148,7 @@ HOOK(Direct3D_CreateDevice) {
     g_rendertarget = g_backbuffer;
     WR32(MEM(0x0037aa30), g_device); /* D3D_g_pDevice */
     if (ppdevice) WR32(MEM(ppdevice), g_device);
+    store_viewport(0, 0, w, h, 0.0f, 1.0f);
     for (int i = 0; i < 512; i++) { memset(g_transforms[i], 0, 64); g_transforms[i][0] = g_transforms[i][5] = g_transforms[i][10] = g_transforms[i][15] = 1.0f; }
     fprintf(stderr, "d3d: device created, %ux%u back buffer\n", w, h);
     if (!getenv("RECOMP_HEADLESS")) g_render = r_ready() ? 1 : r_init(w, h);
@@ -149,7 +160,9 @@ HOOK(D3D_GetAdapterDisplayMode) {
     if (pmode) { WR32(MEM(pmode), 640); WR32(MEM(pmode + 4), 480); WR32(MEM(pmode + 8), 60); WR32(MEM(pmode + 12), 0x06); }
     RET(D3D_GetAdapterDisplayMode, 0);
 }
-HOOK(D3DDevice_GetDeviceCaps) { memset(MEM(ARG(ctx, 0)), 0, 0x130); RET(D3DDevice_GetDeviceCaps, 0); }
+/* D3DCAPS8 is 0x35 dwords, copied from D3D's static table as the original
+   (0x36a080) does; CD3DContext keeps its viewport right after its copy */
+HOOK(D3DDevice_GetDeviceCaps) { memcpy(MEM(ARG(ctx, 0)), MEM(0x00441ad8), 0x35 * 4); RET(D3DDevice_GetDeviceCaps, 0); }
 HOOK(D3DDevice_Release) { RET(D3DDevice_Release, 0); }
 HOOK(D3DDevice_Present) {
     g_frames++;
@@ -180,6 +193,10 @@ HOOK(D3DDevice_SetRenderTarget) { if (ARG(ctx, 0)) g_rendertarget = ARG(ctx, 0);
 HOOK(D3DDevice_SetTransform) {
     uint32_t state = ARG(ctx, 0) & 511, pm = ARG(ctx, 1);
     if (pm) memcpy(g_transforms[state], MEM(pm), 64);
+    if (pm && !(fabsf(g_transforms[state][0]) < 1e30f)) { /* a degenerate projection hides everything drawn with it */
+        static int warned;
+        if (!warned++) fprintf(stderr, "d3d: transform %u has scale %g (set from %08x)\n", state, g_transforms[state][0], RD32(MEM(RD32(ctx->r + REG_ESP))));
+    }
     if (g_render && pm) r_set_transform(ARG(ctx, 0), g_transforms[state]);
     RET(D3DDevice_SetTransform, 0);
 }
@@ -192,9 +209,10 @@ HOOK(D3DDevice_GetTransform) {
 /* state: the game also writes D3D's state arrays directly; nothing to do */
 HOOK(D3DDevice_SetViewport) {
     uint32_t vp = ARG(ctx, 0);
-    if (g_render && vp) {
+    if (vp) {
         float minz, maxz; memcpy(&minz, MEM(vp + 16), 4); memcpy(&maxz, MEM(vp + 20), 4);
-        r_set_viewport(RD32(MEM(vp)), RD32(MEM(vp + 4)), RD32(MEM(vp + 8)), RD32(MEM(vp + 12)), minz, maxz);
+        store_viewport(RD32(MEM(vp)), RD32(MEM(vp + 4)), RD32(MEM(vp + 8)), RD32(MEM(vp + 12)), minz, maxz);
+        if (g_render) r_set_viewport(RD32(MEM(vp)), RD32(MEM(vp + 4)), RD32(MEM(vp + 8)), RD32(MEM(vp + 12)), minz, maxz);
     }
     RET(D3DDevice_SetViewport, 0);
 }
@@ -244,10 +262,16 @@ HOOK(D3DDevice_DeleteVertexShader) { RET(D3DDevice_DeleteVertexShader, 0); }
 HOOK(D3DDevice_LoadVertexShader) { RET(D3DDevice_LoadVertexShader, 0); }
 HOOK(D3DDevice_SelectVertexShader) { RET(D3DDevice_SelectVertexShader, 0); }
 HOOK(D3DDevice_SetShaderConstantMode) { RET(D3DDevice_SetShaderConstantMode, 0); }
-HOOK(D3DDevice_CreateStateBlock) { if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), g_handles++); RET(D3DDevice_CreateStateBlock, 0); }
-HOOK(D3DDevice_CaptureStateBlock) { RET(D3DDevice_CaptureStateBlock, 0); }
-HOOK(D3DDevice_ApplyStateBlock) { RET(D3DDevice_ApplyStateBlock, 0); }
-HOOK(D3DDevice_DeleteStateBlock) { RET(D3DDevice_DeleteStateBlock, 0); }
+/* (Type, pToken): the game only asks for D3DSBT_ALL (CFlashOverlay saves the
+   state around its drawing) */
+HOOK(D3DDevice_CreateStateBlock) {
+    uint32_t token = g_render ? r_create_state_block() : 0; /* 0: no block, the other calls ignore it */
+    if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), token);
+    RET(D3DDevice_CreateStateBlock, 0);
+}
+HOOK(D3DDevice_CaptureStateBlock) { if (g_render) r_capture_state_block(ARG(ctx, 0)); RET(D3DDevice_CaptureStateBlock, 0); }
+HOOK(D3DDevice_ApplyStateBlock) { if (g_render) r_apply_state_block(ARG(ctx, 0)); RET(D3DDevice_ApplyStateBlock, 0); }
+HOOK(D3DDevice_DeleteStateBlock) { if (g_render) r_delete_state_block(ARG(ctx, 0)); RET(D3DDevice_DeleteStateBlock, 0); }
 
 /* drawing */
 HOOK(D3DDevice_DrawVertices) { if (g_render) r_draw(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_DrawVertices, 0); }
@@ -274,14 +298,6 @@ static void write_surface_desc(uint32_t d, uint32_t o, uint32_t level) {
     WR32(MEM(d + 4), t == T_SURFACE ? 1 : 3); /* D3DRTYPE_SURFACE / TEXTURE */
     WR32(MEM(d + 8), 0);
     WR32(MEM(d + 12), pitch * rows);
-    if (!getenv("RECOMP_DESC_XBOX")) {
-        /* The correct layout makes the front end rasterise its fonts, which
-           then corrupts the XAPI heap (issue #6); until that is found,
-           hand out zero sizes the way the old PC-layout stub did, which
-           makes the game skip that work (no text). */
-        WR32(MEM(d + 16), 0); WR32(MEM(d + 20), 0); WR32(MEM(d + 24), 0);
-        return;
-    }
     WR32(MEM(d + 16), 0x11);                  /* D3DMULTISAMPLE_NONE, as the original reports */
     WR32(MEM(d + 20), w);
     WR32(MEM(d + 24), h);

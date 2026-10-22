@@ -89,6 +89,11 @@ next to the executable. Environment switches for unattended runs:
 - `RECOMP_LAUNCH=path`: boot with saved launch data instead of a cold boot.
   When the game relaunches itself (`XLaunchNewImageA`) the host saves the
   data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.
+- `RECOMP_SHOT="900,1200"`: save the back buffer as `build\shot_<frame>.bmp`
+  at those frames (works with the window hidden or covered).
+- `RECOMP_STATELOG=frame`: print the device state (blending, stage
+  operations, where the first vertex lands on screen) behind every draw of
+  that frame.
 - `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
   indirect (or all) guest calls. About 100× slower.
 

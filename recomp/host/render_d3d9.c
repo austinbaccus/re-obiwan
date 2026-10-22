@@ -379,7 +379,9 @@ static uint32_t xbox_cull(uint32_t v) { return v == 0x900 ? D3DCULL_CW : v == 0x
 static void rs(D3DRENDERSTATETYPE s, uint32_t v) { if (g_dev) IDirect3DDevice9_SetRenderState(g_dev, s, v); }
 
 void r_set_rs_simple(uint32_t method, uint32_t value) {
-    switch (method) {
+    /* the caller passes the push-buffer header (dword count in bits 18+,
+       subchannel in 13..15), e.g. 0x40304 for ALPHABLENDENABLE */
+    switch (method & 0x1FFC) {
     case 0x354: rs(D3DRS_ZFUNC, gl_cmp(value)); break;
     case 0x33C: rs(D3DRS_ALPHAFUNC, gl_cmp(value)); break;
     case 0x304: rs(D3DRS_ALPHABLENDENABLE, value != 0); break;
@@ -451,30 +453,47 @@ void r_set_rs(uint32_t pc_state, uint32_t value) {
     rs(pc_state, value);
 }
 
-/* Xbox D3DTSS indices (deferred 0..21, then the rest) */
+/* Xbox D3DTOP -> PC: equal up to BLENDDIFFUSEALPHA (12), reordered after
+   (per Cxbx-Reloaded) */
+static uint32_t xbox_top(uint32_t v) {
+    static const uint8_t pc[] = {0, D3DTOP_DISABLE, D3DTOP_SELECTARG1, D3DTOP_SELECTARG2, D3DTOP_MODULATE, D3DTOP_MODULATE2X,
+                                 D3DTOP_MODULATE4X, D3DTOP_ADD, D3DTOP_ADDSIGNED, D3DTOP_ADDSIGNED2X, D3DTOP_SUBTRACT,
+                                 D3DTOP_ADDSMOOTH, D3DTOP_BLENDDIFFUSEALPHA, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDTEXTUREALPHA,
+                                 D3DTOP_BLENDFACTORALPHA, D3DTOP_BLENDTEXTUREALPHAPM, D3DTOP_PREMODULATE,
+                                 D3DTOP_MODULATEALPHA_ADDCOLOR, D3DTOP_MODULATECOLOR_ADDALPHA, D3DTOP_MODULATEINVALPHA_ADDCOLOR,
+                                 D3DTOP_MODULATEINVCOLOR_ADDALPHA, D3DTOP_DOTPRODUCT3, D3DTOP_MULTIPLYADD, D3DTOP_LERP,
+                                 D3DTOP_BUMPENVMAP, D3DTOP_BUMPENVMAPLUMINANCE};
+    return v < sizeof pc && v ? pc[v] : D3DTOP_DISABLE;
+}
+
+/* Xbox D3DTSS indices of D3D8 3948 (XDK 3911): the stage operations come
+   first (COLOROP 0 .. TEXTURETRANSFORMFLAGS 9), then the sampler states
+   (ADDRESSU 10 .. ALPHAKILL 21); deferred 0..21, then the rest. Later XDKs
+   moved the sampler states to the front. */
 void r_set_tss(uint32_t stage, uint32_t type, uint32_t value) {
     if (!g_dev || stage >= 4) return;
     if (g_drawlog > 0) fprintf(stderr, "tss stage %u type %u = %08x\n", stage, type, value);
     switch (type) {
-    case 0: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSU, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
-    case 1: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSV, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
-    case 2: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSW, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
-    case 3: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAGFILTER, value >= 3 ? D3DTEXF_LINEAR : value); break;
-    case 4: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MINFILTER, value >= 3 ? D3DTEXF_LINEAR : value); break;
-    case 5: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE); break; /* one level uploaded */
-    case 6: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPMAPLODBIAS, value); break;
-    case 7: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXMIPLEVEL, 0); break;
-    case 8: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXANISOTROPY, value ? value : 1); break;
-    case 12: g_stage_ops[stage][0] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, value); break;
-    case 13: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG0, value); break;
-    case 14: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG1, value); break;
-    case 15: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG2, value); break;
-    case 16: g_stage_ops[stage][1] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, value); break;
-    case 17: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG0, value); break;
-    case 18: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG1, value); break;
-    case 19: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG2, value); break;
-    case 20: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_RESULTARG, value); break;
-    case 21: g_texflags[stage] = value; g_stage_dirty = 1; break; /* applied with the texture matrix */
+    case 0: g_stage_ops[stage][0] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, xbox_top(value)); break;
+    case 1: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG0, value); break;
+    case 2: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG1, value); break;
+    case 3: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG2, value); break;
+    case 4: g_stage_ops[stage][1] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, xbox_top(value)); break;
+    case 5: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG0, value); break;
+    case 6: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG1, value); break;
+    case 7: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG2, value); break;
+    case 8: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_RESULTARG, value); break;
+    case 9: g_texflags[stage] = value; g_stage_dirty = 1; break; /* applied with the texture matrix */
+    case 10: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSU, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
+    case 11: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSV, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
+    case 12: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_ADDRESSW, value > 4 ? D3DTADDRESS_CLAMP : value ? value : 1); break;
+    case 13: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAGFILTER, value >= 3 ? D3DTEXF_LINEAR : value); break;
+    case 14: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MINFILTER, value >= 3 ? D3DTEXF_LINEAR : value); break;
+    case 15: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE); break; /* one level uploaded */
+    case 16: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPMAPLODBIAS, value); break;
+    case 17: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXMIPLEVEL, 0); break;
+    case 18: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXANISOTROPY, value ? value : 1); break;
+    /* 19 COLORKEYOP, 20 COLORSIGN, 21 ALPHAKILL: no Direct3D 9 equivalent */
     case 22: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT00, value); break;
     case 23: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT01, value); break;
     case 24: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT11, value); break;
@@ -495,18 +514,7 @@ void r_set_transform(uint32_t state, const float *m) {
         fprintf(stderr, "transform %u: [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f] [%.5f %.5f %.5f %.5f]\n", state,
                 m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
     if (state == 0) IDirect3DDevice9_SetTransform(g_dev, D3DTS_VIEW, (const D3DMATRIX *)m);
-    else if (state == 1) {
-        /* The front end's projection has no translation and its content lands
-           half a screen down and right of where it belongs, so the console's
-           clip space seems to put the origin at the top-left corner; shift
-           clip space by (-1, +1) (post-multiplied, so it holds for perspective
-           projections too) until the real rule is known. */
-        D3DMATRIX p;
-        memcpy(&p, m, 64);
-        if (!getenv("RECOMP_NO_CLIP_SHIFT"))
-            for (int r = 0; r < 4; r++) { p.m[r][0] -= p.m[r][3]; p.m[r][1] += p.m[r][3]; }
-        IDirect3DDevice9_SetTransform(g_dev, D3DTS_PROJECTION, &p);
-    }
+    else if (state == 1) IDirect3DDevice9_SetTransform(g_dev, D3DTS_PROJECTION, (const D3DMATRIX *)m);
     else if (state >= 2 && state <= 5) { memcpy(g_texmat[state - 2], m, 64); g_stage_dirty = 1; }
     else if (state >= 6 && state <= 9) IDirect3DDevice9_SetTransform(g_dev, D3DTS_WORLDMATRIX(state - 6), (const D3DMATRIX *)m);
     else if (state >= 256 && state < 512) IDirect3DDevice9_SetTransform(g_dev, D3DTS_WORLDMATRIX(state - 256), (const D3DMATRIX *)m);
@@ -576,6 +584,55 @@ void r_set_stream(uint32_t stream, uint32_t vb, uint32_t stride) {
     if (stream == 0) { g_stream_vb = vb; g_stream_stride = stride; }
 }
 
+/* ---- state blocks ----------------------------------------------------------- */
+/* The Flash overlay saves the device state around its drawing (CreateStateBlock
+   D3DSBT_ALL, Capture, draw, Apply); text drawn afterwards relies on it (its
+   FVF, stage setup). A Direct3D 9 block holds the device side, and the shadow
+   state the draws read is copied alongside. */
+#define STATE_BLOCKS 64
+typedef struct {
+    IDirect3DStateBlock9 *sb;
+    uint32_t bound[4], texflags[4], stage_ops[4][2];
+    float texmat[4][16];
+    uint32_t fvf, vs_handle, ps_handle, stream_vb, stream_stride;
+} StateBlock;
+static StateBlock g_sb[STATE_BLOCKS];
+
+uint32_t r_create_state_block(void) {
+    for (uint32_t i = 0; i < STATE_BLOCKS; i++) {
+        if (g_sb[i].sb) continue;
+        if (!g_dev || FAILED(IDirect3DDevice9_CreateStateBlock(g_dev, D3DSBT_ALL, &g_sb[i].sb))) return 0;
+        r_capture_state_block(i + 1); /* the device part is captured by the creation */
+        return i + 1;
+    }
+    fprintf(stderr, "render: out of state blocks\n");
+    return 0;
+}
+void r_capture_state_block(uint32_t token) {
+    if (token - 1 >= STATE_BLOCKS || !g_sb[token - 1].sb) return;
+    StateBlock *b = &g_sb[token - 1];
+    IDirect3DStateBlock9_Capture(b->sb);
+    memcpy(b->bound, g_bound, sizeof b->bound); memcpy(b->texflags, g_texflags, sizeof b->texflags);
+    memcpy(b->stage_ops, g_stage_ops, sizeof b->stage_ops); memcpy(b->texmat, g_texmat, sizeof b->texmat);
+    b->fvf = g_fvf; b->vs_handle = g_vs_handle; b->ps_handle = g_ps_handle;
+    b->stream_vb = g_stream_vb; b->stream_stride = g_stream_stride;
+}
+void r_apply_state_block(uint32_t token) {
+    if (token - 1 >= STATE_BLOCKS || !g_sb[token - 1].sb) return;
+    StateBlock *b = &g_sb[token - 1];
+    IDirect3DStateBlock9_Apply(b->sb);
+    memcpy(g_bound, b->bound, sizeof g_bound); memcpy(g_texflags, b->texflags, sizeof g_texflags);
+    memcpy(g_stage_ops, b->stage_ops, sizeof g_stage_ops); memcpy(g_texmat, b->texmat, sizeof g_texmat);
+    g_fvf = b->fvf; g_vs_handle = b->vs_handle; g_ps_handle = b->ps_handle;
+    g_stream_vb = b->stream_vb; g_stream_stride = b->stream_stride;
+    g_stage_dirty = 1; /* rebind: a bound texture may have been re-uploaded since */
+}
+void r_delete_state_block(uint32_t token) {
+    if (token - 1 >= STATE_BLOCKS || !g_sb[token - 1].sb) return;
+    IDirect3DStateBlock9_Release(g_sb[token - 1].sb);
+    memset(&g_sb[token - 1], 0, sizeof g_sb[0]);
+}
+
 static D3DPRIMITIVETYPE prim_pc(uint32_t p, uint32_t n, uint32_t *count) {
     switch (p) {
     case 1: *count = n; return D3DPT_POINTLIST;
@@ -600,9 +657,50 @@ static void drawlog(uint32_t prim, uint32_t n, const void *data, uint32_t stride
                    RD32(MEM(t->guest + 0xC)), RD32(MEM(t->guest + 0x10)), g_stage_ops[0][0], g_stage_ops[0][1], v[(stride - 8) / 4], v[(stride - 4) / 4]);
 }
 
+/* RECOMP_STATELOG=frame: the device state behind every draw of that frame */
+static uint32_t g_frame;
+static void statelog(uint32_t prim, uint32_t n, const void *data, uint32_t stride) {
+    static int frame = -1;
+    if (frame < 0) frame = getenv("RECOMP_STATELOG") ? atoi(getenv("RECOMP_STATELOG")) : 0;
+    if (!frame || g_frame + 1 != (uint32_t)frame) return;
+    DWORD v[16];
+    static const D3DRENDERSTATETYPE rsl[] = {D3DRS_LIGHTING, D3DRS_FOGENABLE, D3DRS_FOGCOLOR, D3DRS_ALPHABLENDENABLE, D3DRS_SRCBLEND,
+                                             D3DRS_DESTBLEND, D3DRS_COLORWRITEENABLE, D3DRS_STENCILENABLE, D3DRS_ALPHATESTENABLE,
+                                             D3DRS_ZENABLE, D3DRS_CULLMODE, D3DRS_COLORVERTEX, D3DRS_TEXTUREFACTOR};
+    for (int i = 0; i < 13; i++) IDirect3DDevice9_GetRenderState(g_dev, rsl[i], &v[i]);
+    DWORD cop, ca1, ca2, aop, aa1, aa2;
+    IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLOROP, &cop); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLORARG1, &ca1);
+    IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLORARG2, &ca2); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAOP, &aop);
+    IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAARG1, &aa1); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAARG2, &aa2);
+    /* where the first vertex lands: world * view * projection, then the viewport */
+    D3DMATRIX m[3];
+    D3DVIEWPORT9 vp;
+    IDirect3DDevice9_GetTransform(g_dev, D3DTS_WORLD, &m[0]); IDirect3DDevice9_GetTransform(g_dev, D3DTS_VIEW, &m[1]);
+    IDirect3DDevice9_GetTransform(g_dev, D3DTS_PROJECTION, &m[2]); IDirect3DDevice9_GetViewport(g_dev, &vp);
+    const float *f = data;
+    float p[4] = {f[0], f[1], f[2], 1};
+    for (int k = 0; k < 3; k++) {
+        float q[4];
+        for (int c = 0; c < 4; c++) q[c] = p[0] * m[k].m[0][c] + p[1] * m[k].m[1][c] + p[2] * m[k].m[2][c] + p[3] * m[k].m[3][c];
+        memcpy(p, q, sizeof p);
+    }
+    float sx = vp.X + (p[0] / p[3] + 1) * vp.Width / 2, sy = vp.Y + (1 - p[1] / p[3]) * vp.Height / 2;
+    fprintf(stderr, "state: prim %u n %u fvf %03x stride %u tex %08x color0 %08x | light %lu fog %lu/%08lx blend %lu %lu/%lu write %lx stencil %lu atest %lu z %lu cull %lu colorvertex %lu tfactor %08lx | "
+            "stage0 c %lu(%lu,%lu) a %lu(%lu,%lu) | v0 (%.1f %.1f %.1f) -> screen %.1f %.1f (world scale %.4f)\n", prim, n, g_fvf, stride, g_bound[0],
+            (g_fvf & D3DFVF_DIFFUSE) ? ((const uint32_t *)data)[3] : 0,
+            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], cop, ca1, ca2, aop, aa1, aa2,
+            f[0], f[1], f[2], sx, sy, m[0].m[0][0]);
+    if (!(p[3] > 0) || sx != sx)
+        for (int k = 0; k < 3; k++)
+            fprintf(stderr, "       %s [%g %g %g %g] [%g %g %g %g] [%g %g %g %g] [%g %g %g %g]\n", k == 0 ? "world" : k == 1 ? "view " : "proj ",
+                    m[k].m[0][0], m[k].m[0][1], m[k].m[0][2], m[k].m[0][3], m[k].m[1][0], m[k].m[1][1], m[k].m[1][2], m[k].m[1][3],
+                    m[k].m[2][0], m[k].m[2][1], m[k].m[2][2], m[k].m[2][3], m[k].m[3][0], m[k].m[3][1], m[k].m[3][2], m[k].m[3][3]);
+}
+
 static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride) {
     if (!g_dev || !g_fvf || !n || !stride) return;
     drawlog(prim, n, data, stride);
+    statelog(prim, n, data, stride);
     apply_textures();
     if (prim == 8) { /* quad list: two triangles per quad through an index list */
         uint32_t quads = n / 4;
@@ -670,9 +768,44 @@ void r_clear(uint32_t flags, uint32_t color, float z, uint32_t stencil) {
     if (f) IDirect3DDevice9_Clear(g_dev, 0, NULL, f, color, z, stencil);
 }
 
+/* RECOMP_SHOT="frame,frame,...": save the back buffer as build\shot_<frame>.bmp
+   before those presents; works whether or not the window is on screen */
+static void shot(uint32_t frame) {
+    const char *list = getenv("RECOMP_SHOT");
+    for (const char *p = list; p && *p; p = strchr(p, ',') ? strchr(p, ',') + 1 : "")
+        if ((uint32_t)atoi(p) == frame) goto take;
+    return;
+take:;
+    IDirect3DSurface9 *bb = NULL, *sys = NULL;
+    D3DSURFACE_DESC d;
+    D3DLOCKED_RECT lr;
+    if (FAILED(IDirect3DDevice9_GetBackBuffer(g_dev, 0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
+    IDirect3DSurface9_GetDesc(bb, &d);
+    if (SUCCEEDED(IDirect3DDevice9_CreateOffscreenPlainSurface(g_dev, d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &sys, NULL)) &&
+        SUCCEEDED(IDirect3DDevice9_GetRenderTargetData(g_dev, bb, sys)) &&
+        SUCCEEDED(IDirect3DSurface9_LockRect(sys, &lr, NULL, D3DLOCK_READONLY))) {
+        char name[64];
+        snprintf(name, sizeof name, "build\\shot_%u.bmp", frame);
+        FILE *f = fopen(name, "wb");
+        if (f) {
+            uint32_t w = d.Width, h = d.Height, size = 54 + w * 4 * h;
+            uint8_t hdr[54] = {'B', 'M', size, size >> 8, size >> 16, size >> 24, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0,
+                               w, w >> 8, w >> 16, w >> 24, h, h >> 8, h >> 16, h >> 24, 1, 0, 32, 0};
+            fwrite(hdr, 1, 54, f);
+            for (int y = (int)h - 1; y >= 0; y--) fwrite((uint8_t *)lr.pBits + y * lr.Pitch, 1, w * 4, f);
+            fclose(f);
+            fprintf(stderr, "render: saved %s\n", name);
+        }
+        IDirect3DSurface9_UnlockRect(sys);
+    }
+    if (sys) IDirect3DSurface9_Release(sys);
+    IDirect3DSurface9_Release(bb);
+}
+
 void r_present(void) {
     if (!g_dev) return;
     IDirect3DDevice9_EndScene(g_dev);
+    shot(++g_frame);
     HRESULT hr = IDirect3DDevice9_Present(g_dev, NULL, NULL, NULL, NULL);
     if (hr == D3DERR_DEVICELOST && !g_lost) { fprintf(stderr, "render: device lost\n"); g_lost = 1; }
     pump();

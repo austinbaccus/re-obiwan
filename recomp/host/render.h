@@ -28,6 +28,13 @@ void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
 void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);
 void r_draw_indexed(uint32_t prim, uint32_t vertex_count, uint32_t index_data);
 
+/* D3DSBT_ALL state blocks: the whole device state, captured at creation and
+   by Capture, restored by Apply. Tokens are never 0. */
+uint32_t r_create_state_block(void);
+void r_capture_state_block(uint32_t token);
+void r_apply_state_block(uint32_t token);
+void r_delete_state_block(uint32_t token);
+
 /* the guest wrote to a pixel container (Lock, Register) or freed it */
 void r_texture_dirty(uint32_t guest_object);
 void r_resource_freed(uint32_t guest_object);
