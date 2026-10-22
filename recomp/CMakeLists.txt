@@ -21,13 +21,16 @@ target_include_directories(guest PUBLIC runtime "${RECOMP_GENERATED_DIR}")
 if(MSVC)
     # /fp:precise keeps float and double arithmetic in their own precision;
     # 4102: unreferenced labels are normal in generated code.
-    target_compile_options(guest PRIVATE /fp:precise /O2 /wd4102 /wd4146 /wd4334)
+    target_compile_options(guest PRIVATE /fp:precise /O2 /wd4102 /wd4146 /wd4334 /wd4996)
 endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     # The harness proper, loaded at a normal address.
-    add_library(difftest_core SHARED tests/difftest.c)
-    target_link_libraries(difftest_core PRIVATE guest shell32)
+    # hooks_xapi/kernel satisfy the hook_* symbols the generated code references
+    add_library(difftest_core SHARED tests/difftest.c host/hooks_xapi.c host/kernel.c)
+    target_include_directories(difftest_core PRIVATE host)
+    target_compile_options(difftest_core PRIVATE /wd4996)
+    target_link_libraries(difftest_core PRIVATE guest shell32 user32)
     target_link_options(difftest_core PRIVATE /SAFESEH:NO)
     # The loader owns 0x00010000..0x0052D000 so the XBE can be mapped there.
     add_executable(difftest tests/loader.c)
@@ -36,4 +39,18 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
         /ENTRY:loader_start /SUBSYSTEM:CONSOLE /STACK:0x4000000 /SAFESEH:NO /OPT:NOREF)
     set_target_properties(difftest PROPERTIES LINK_LIBRARIES kernel32)
     add_dependencies(difftest difftest_core)
+
+    # The game itself: host kernel + hooks + recompiled code, entered the same way.
+    add_library(obiwan_core SHARED host/boot.c host/kernel.c host/hooks_xapi.c runtime/xbe_image.c)
+    target_include_directories(obiwan_core PRIVATE host)
+    target_link_libraries(obiwan_core PRIVATE guest shell32 user32 dbghelp)
+    target_compile_options(obiwan_core PRIVATE /wd4996)
+    target_link_options(obiwan_core PRIVATE /SAFESEH:NO)
+    add_executable(obiwan tests/loader.c)
+    target_compile_definitions(obiwan PRIVATE LOADER_DLL="obiwan_core.dll" LOADER_ENTRY="game_main" LOADER_RESERVE=0x3FED000)
+    target_compile_options(obiwan PRIVATE /GS- /O1)
+    target_link_options(obiwan PRIVATE /BASE:0x10000 /FIXED /DYNAMICBASE:NO /NODEFAULTLIB
+        /ENTRY:loader_start /SUBSYSTEM:CONSOLE /STACK:0x4000000 /SAFESEH:NO /OPT:NOREF /LARGEADDRESSAWARE)
+    set_target_properties(obiwan PROPERTIES LINK_LIBRARIES kernel32)
+    add_dependencies(obiwan obiwan_core)
 endif()

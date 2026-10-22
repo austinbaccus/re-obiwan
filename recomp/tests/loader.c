@@ -14,14 +14,22 @@
 #pragma section(".xbe", read, execute)
 /* 0x00013000.. with the loader's own headers and code in the first pages:
    the image ends past 0x005295E0, the end of the XBE. */
-__declspec(allocate(".xbe")) unsigned char g_xbe_range[0x51a000];
+#ifndef LOADER_RESERVE
+#define LOADER_RESERVE 0x51a000 /* just the XBE; the game build covers all 64 MB of guest RAM */
+#endif
+__declspec(allocate(".xbe")) unsigned char g_xbe_range[LOADER_RESERVE];
+
+#ifndef LOADER_DLL
+#define LOADER_DLL "difftest_core.dll"
+#define LOADER_ENTRY "difftest_main"
+#endif
 
 typedef void (*MainFn)(void);
 
 void loader_start(void) {
     (void)*(volatile unsigned char *)g_xbe_range; /* keep the section */
-    HMODULE core = LoadLibraryA("difftest_core.dll");
-    MainFn main_fn = core ? (MainFn)GetProcAddress(core, "difftest_main") : NULL;
+    HMODULE core = LoadLibraryA(LOADER_DLL);
+    MainFn main_fn = core ? (MainFn)GetProcAddress(core, LOADER_ENTRY) : NULL;
     if (!main_fn) ExitProcess(4);
     main_fn(); /* does not return */
     ExitProcess(5);

@@ -123,6 +123,8 @@ double rt_fscale(double x, double s);
 
 _Noreturn void rt_trap(Ctx *ctx, TrapKind kind, uint32_t addr);
 void rt_call(Ctx *ctx, uint32_t addr);
+extern void (*g_kernel_call)(Ctx *ctx, uint32_t ordinal); /* set by the host runtime */
+extern int g_trace_calls;
 void rt_jump(Ctx *ctx, uint32_t addr);
 void rt_interrupt(Ctx *ctx, uint32_t addr, uint32_t vector);
 uint64_t rt_rdtsc(Ctx *ctx);

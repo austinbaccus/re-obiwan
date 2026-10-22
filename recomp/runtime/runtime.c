@@ -85,11 +85,34 @@ double rt_fpatan(double y, double x) { return atan2(y, x); }
 double rt_f2xm1(double x) { return exp2(x) - 1.0; }
 double rt_fscale(double x, double s) { return ldexp(x, (int)trunc(s)); }
 
+int g_trace_calls; /* RECOMP_TRACE_CALLS=1: log every indirect call and jump */
+
+static const char *trap_name(TrapKind k) {
+    switch (k) {
+    case TRAP_MISSING_FUNCTION: return "call to code that was not recompiled";
+    case TRAP_INTERRUPT: return "int3 / software interrupt (assert)";
+    case TRAP_DIVIDE: return "divide error";
+    case TRAP_UNSUPPORTED: return "unsupported instruction or kernel function";
+    default: return "trap";
+    }
+}
+
 void rt_trap(Ctx *ctx, TrapKind kind, uint32_t addr) {
-    ctx->trap = kind;
-    ctx->trap_addr = addr;
-    if (ctx->trap_jmp) longjmp(*ctx->trap_jmp, 1);
-    fprintf(stderr, "guest trap %d at %08x\n", (int)kind, addr);
+    if (ctx) {
+        ctx->trap = kind;
+        ctx->trap_addr = addr;
+        if (ctx->trap_jmp) longjmp(*ctx->trap_jmp, 1);
+        fprintf(stderr, "guest trap: %s at %08x\n  eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x\n",
+                trap_name(kind), addr, RD32(ctx->r + REG_EAX), RD32(ctx->r + REG_ECX), RD32(ctx->r + REG_EDX),
+                RD32(ctx->r + REG_EBX), RD32(ctx->r + REG_ESP), RD32(ctx->r + REG_EBP), RD32(ctx->r + REG_ESI),
+                RD32(ctx->r + REG_EDI));
+        uint32_t esp = RD32(ctx->r + REG_ESP);
+        fprintf(stderr, "  stack:");
+        for (int i = 0; i < 8; i++) fprintf(stderr, " %08x", RD32(MEM(esp + 4 * i)));
+        fprintf(stderr, "\n");
+    } else {
+        fprintf(stderr, "guest trap: %s at %08x\n", trap_name(kind), addr);
+    }
     abort();
 }
 
@@ -103,8 +126,17 @@ GuestFn rt_lookup(uint32_t addr) {
     return NULL;
 }
 
+void (*g_kernel_call)(Ctx *ctx, uint32_t ordinal);
+
 void rt_call(Ctx *ctx, uint32_t addr) {
+    if (addr >= 0xFFFF0000u) { /* patched kernel thunk slot */
+        if (!g_kernel_call) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
+        g_kernel_call(ctx, addr & 0xFFFF);
+        return;
+    }
+    if ((addr & 0xFFFF0000u) == 0xDEAD0000u) return; /* host-pushed return address: thread or callback ends */
     GuestFn fn = rt_lookup(addr);
+    if (g_trace_calls) fprintf(stderr, "  -> %08x%s (esp %08x)\n", addr, fn ? "" : " (missing)", RD32(ctx->r + REG_ESP));
     if (!fn) rt_trap(ctx, TRAP_MISSING_FUNCTION, addr);
     fn(ctx);
 }

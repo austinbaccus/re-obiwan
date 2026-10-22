@@ -187,6 +187,7 @@ static void run_native(uint32_t addr, const Start *s, Result *r) {
 }
 
 /* ---- recompiled run ---------------------------------------------------- */
+static _Alignas(16) uint8_t g_teb_copy[0x1000];
 static void run_recompiled(GuestFn fn, const Start *s, Result *r) {
     static Ctx ctx;
     jmp_buf jb;
@@ -194,12 +195,11 @@ static void run_recompiled(GuestFn fn, const Start *s, Result *r) {
     for (int i = 0; i < 8; i++) WR32(ctx.r + 4 * i, s->reg[i]);
     WR32(MEM(s->reg[4]), 0xdeadbee0u); /* return address (only its slot matters) */
     WR16(ctx.r + REG_FPUCW, 0x027f);
-    /* fs: points at a private copy of this thread's TEB, so SEH frame links
-       and stack-base reads see the same values as the native run without the
-       guest's fs:[0] writes reaching the host's exception chain */
-    static _Alignas(16) uint8_t teb_copy[0x1000];
-    memcpy(teb_copy, (void *)(uintptr_t)__readfsdword(0x18), sizeof teb_copy);
-    WR32(ctx.r + REG_FS_OFFSET, (uint32_t)(uintptr_t)teb_copy);
+    /* fs: points at a private copy of this thread's TEB (taken in test_one,
+       at the same stack depth the native run sees), so SEH frame links and
+       stack-base reads match the native run without the guest's fs:[0]
+       writes reaching the host's exception chain */
+    WR32(ctx.r + REG_FS_OFFSET, (uint32_t)(uintptr_t)g_teb_copy);
     for (int i = 0; i < 8; i++) WRF80SLOT(ctx.r + REG_ST0 + 0x10 * i, bits_f64(0xfff8000000000000ull));
     WR32(ctx.r + REG_MXCSR, 0x1f80);
     ctx.trap_jmp = &jb;
@@ -255,6 +255,7 @@ static int test_one(uint32_t addr, uint32_t seed) {
     memcpy(snap_stk, stack, STACK_SIZE);
 
     make_start(&s, stack, seed);
+    memcpy(g_teb_copy, (void *)(uintptr_t)__readfsdword(0x18), sizeof g_teb_copy);
     VirtualProtect(snap, snap_size, PAGE_NOACCESS, &oldprot);
     run_recompiled(fn, &s, &rr);
     VirtualProtect(snap, snap_size, PAGE_READWRITE, &oldprot);

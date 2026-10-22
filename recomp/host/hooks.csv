@@ -1,0 +1,16 @@
+# Guest functions the host runtime implements itself (hook_<name>).
+# address,name
+# XAPI peripherals (XPP section): the USB stack cannot run without hardware.
+0x003b5d18,XInitDevices
+0x003b5d1d,XGetDevices
+0x003b5d3f,XGetDeviceChanges
+0x003bbecd,XInputOpen
+0x003bbf42,XInputClose
+0x003bbf4e,XInputGetCapabilities
+0x003bc140,XInputGetState
+0x003bc1b1,XInputSetState
+# XAPI pieces that talk to hardware or the real kernel in ways we skip.
+0x0002dcec,XapiBootToDash
+0x0002a88b,XLaunchNewImageA
+0x0002b2cc,XapiInitAutoPowerDown
+0x0002a6d6,OutputDebugStringA
