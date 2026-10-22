@@ -28,13 +28,13 @@ void rt_packssdw(void *o, const void *a, const void *b) {
     r[0] = sat16(x[0]); r[1] = sat16(x[1]); r[2] = sat16(y[0]); r[3] = sat16(y[1]);
     memcpy(o, r, 8);
 }
-void rt_psllw(void *o, const void *a, const void *count) {
-    uint16_t x[4]; uint64_t c;
-    memcpy(x, a, 8); memcpy(&c, count, 8);
+void rt_psllw(void *o, const void *a, uint64_t c) {
+    uint16_t x[4];
+    memcpy(x, a, 8);
     for (int i = 0; i < 4; i++) x[i] = c > 15 ? 0 : (uint16_t)(x[i] << c);
     memcpy(o, x, 8);
 }
-void rt_pshufw(void *o, const void *a, int imm) {
+void rt_pshufw(void *o, const void *a, uint64_t imm) {
     uint16_t x[4], r[4];
     memcpy(x, a, 8);
     for (int i = 0; i < 4; i++) r[i] = x[(imm >> (2 * i)) & 3];

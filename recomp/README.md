@@ -45,6 +45,18 @@ is a translation of the game's code.
   `loader.c` explains how the harness gets the XBE's address range from
   Windows.
 
+- **Host runtime** (`host/`): what the recompiled game runs on. `kernel.c`
+  implements the xboxkrnl.exe functions the image imports (memory arena,
+  files and the object namespace with `D:`/`T:`/`U:`/`Z:`, threads with the
+  Xbox TLS layout, events, timers, SHA-1, time) and patches the kernel thunk
+  table so `call [slot]` reaches them. The recompiled XAPI runs unchanged on
+  top of that. `hooks.csv` lists guest functions replaced by host code
+  (`hooks_xapi.c`: XInput, the exit paths); the translator emits a wrapper
+  for each instead of its body. `boot.c` loads the XBE, runs `entry`, and
+  prints a symbolized stack on a crash (host symbols are guest addresses).
+  `obiwan.exe` is the same fixed-address loader as the test harness, grown
+  to cover all 64 MB of guest RAM.
+
 ## Running it
 
 ```powershell
@@ -61,7 +73,14 @@ docker compose exec ghidra-mcp bash -c '
 # 3. Test: every function, 3 random starting states each
 .\build\x86\difftest.exe extracted\default.xbe 3 > build\difftest.jsonl
 .\build\x86\difftest.exe extracted\default.xbe --one 002e0936 1   # one function, seed 1
+
+# 4. Boot the game (translate with `all` and host/hooks.csv first)
+.\build\x86\obiwan.exe extracted\default.xbe --trace       # RECOMP_TRACE_CALLS=1 logs indirect calls too
 ```
+
+The game reads its files from the folder that holds `default.xbe` and keeps
+its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
+next to the executable.
 
 The last argument of the translator picks what to emit: `leaf` (functions
 with no calls, computed jumps, special instructions or `fs:` accesses: the

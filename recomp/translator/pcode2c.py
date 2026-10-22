@@ -411,11 +411,14 @@ class FunctionTranslator:
         elif name == 'rdtsc' and o is not None:
             self.wr(o, 'rt_rdtsc(ctx)')
         elif name in USEROPS_PACKED and o is not None:
-            srcs = ', '.join(self.ptr(x) if self.space(x) != 'const' else f'(uint8_t[8]){{0}}' for x in args
-                             if self.space(x) != 'const' or x.getSize() != 1)
-            imms = [x for x in args if self.space(x) == 'const' and x.getSize() == 1]
-            imm = f', {imms[0].getOffset()}' if imms else ''
-            self.emit(f'{USEROPS_PACKED[name]}({self.ptr(o)}, {srcs}{imm});')
+            # packed sources are pointers; a shift count or shuffle immediate is a value
+            def packed_arg(x, as_value):
+                if self.space(x) == 'const':
+                    return f'(uint64_t)0x{x.getOffset():x}ull'
+                return f'RD64({self.ptr(x)})' if as_value else self.ptr(x)
+            value_last = name in ('psllw', 'pshufw')
+            parts = [packed_arg(x, value_last and i == len(args) - 1) for i, x in enumerate(args)]
+            self.emit(f'{USEROPS_PACKED[name]}({self.ptr(o)}, {", ".join(parts)});')
         elif name in USEROPS_TRAP:
             self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
         else:
@@ -520,12 +523,24 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
                     out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}\n\n')
                 else:
                     out.write(FunctionTranslator(program, ok[a], known).translate() + '\n\n')
+    def purge_bytes(f):
+        """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function."""
+        if f is None:
+            return None
+        for ins in program.getListing().getInstructions(f.getBody(), True):
+            if ins.getMnemonicString().upper() == 'RET':
+                return ins.getNumOperands() and int(ins.getScalar(0).getUnsignedValue()) or 0
+        return 0
+
     with open(os.path.join(out_dir, 'funcs.h'), 'w') as out:
         out.write('#pragma once\n#include "guest.h"\n')
         for a in chosen:
             out.write(f'void f_{a:08x}(Ctx *ctx);\n')
         for a, name in sorted(hooks.items()):
             out.write(f'void hook_{name}(Ctx *ctx); /* 0x{a:08x} */\n')
+            pb = purge_bytes(ok.get(a))
+            if pb is not None:
+                out.write(f'#define HOOKARGS_{name} {pb // 4} /* stdcall arguments popped by the original */\n')
     with open(os.path.join(out_dir, 'functab.c'), 'w') as out:
         out.write('#include "guest.h"\n#include "funcs.h"\n\nconst FuncEntry g_functab[] = {\n')
         for a in chosen:

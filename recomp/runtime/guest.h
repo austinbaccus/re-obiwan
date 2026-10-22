@@ -114,8 +114,8 @@ static inline void wide_xor(void *o, const void *a, const void *b, int n) { for 
 void rt_pmaddwd(void *o, const void *a, const void *b);
 void rt_psubsw(void *o, const void *a, const void *b);
 void rt_packssdw(void *o, const void *a, const void *b);
-void rt_psllw(void *o, const void *a, const void *count);
-void rt_pshufw(void *o, const void *a, int imm);
+void rt_psllw(void *o, const void *a, uint64_t count);
+void rt_pshufw(void *o, const void *a, uint64_t imm);
 
 double rt_fpatan(double y, double x);
 double rt_f2xm1(double x);

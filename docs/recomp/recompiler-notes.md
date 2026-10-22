@@ -84,6 +84,28 @@ works unchanged (classes.md).
   than 60 Hz on PC should mostly work; anything that assumes 30/60 Hz will show
   up in the per-subsystem tick functions listed in code-map.md.
 
+## Prototype results (2026-10-22)
+
+`recomp/` holds the translator, runtime and differential test described in
+`recomp/README.md`. Over the whole image (15,501 functions plus 3,015
+initializer entries added later):
+
+- every function translates; the output builds with MSVC for x86 and x64;
+- the differential test over all 13,938 `.text` functions, 3 random states
+  each: 4,595 functions match the original on every run that executed
+  (registers, x87 result, all of memory), 9,239 fault natively on every run
+  (wild pointers from random inputs, so untestable this way), 41 reach
+  library code that was not recompiled, 11 time out;
+- 52 functions differ, all explained: `FNSTSW` results (Ghidra models only
+  C0-C3 of the x87 status word, not TOP or the sticky exception flags, and
+  the game only tests C0/C2/C3), `FNSTCW` reserved bit 6, functions that
+  read their own return address (`_alloca_probe`, `__SEH_prolog/epilog`),
+  and two one-bit float rounding differences from 80-bit intermediates.
+
+The recompiled XAPI runs unchanged on the host kernel in `recomp/host`:
+`XapiInitProcess` (heap, D:/T:/U:/Z: drive mapping, title metadata, cache
+partition) and the CRT and C++ static initializers complete.
+
 ## Suggested next steps
 
 Done: the API surface ([api-surface.md](api-surface.md)) and the RTTI classes
