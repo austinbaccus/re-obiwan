@@ -635,21 +635,30 @@ K(RtlCompareMemoryUlong) {
     RET(n, 3);
 }
 /* RTL_CRITICAL_SECTION on Xbox is 0x1C bytes; we store a host CS pointer in it */
-K(RtlInitializeCriticalSection) {
-    uint32_t cs = ARG(ctx, 0);
-    CRITICAL_SECTION *h = malloc(sizeof *h);
-    InitializeCriticalSection(h);
-    WR32(MEM(cs + 0x10), (uint32_t)(uintptr_t)h);
-    WR32(MEM(cs + 0x14), 0x4353); /* marker */
-    RET(0, 1);
-}
-static CRITICAL_SECTION *cs_of(uint32_t cs) {
-    if (RD32(MEM(cs + 0x14)) != 0x4353) { /* used before initialization: init lazily */
+/* A guest RTL_CRITICAL_SECTION carries a host CRITICAL_SECTION pointer at
+   +0x10 and a marker at +0x14. Creating it (explicitly or lazily, for
+   sections the game initialises statically) is serialised: two threads
+   creating their own host sections for one guest section would both get
+   in at once. */
+static SRWLOCK g_cs_create = SRWLOCK_INIT;
+static CRITICAL_SECTION *cs_create(uint32_t cs) {
+    AcquireSRWLockExclusive(&g_cs_create);
+    if (RD32(MEM(cs + 0x14)) != 0x4353) {
         CRITICAL_SECTION *h = malloc(sizeof *h);
         InitializeCriticalSection(h);
         WR32(MEM(cs + 0x10), (uint32_t)(uintptr_t)h);
+        MemoryBarrier();
         WR32(MEM(cs + 0x14), 0x4353);
     }
+    ReleaseSRWLockExclusive(&g_cs_create);
+    return (CRITICAL_SECTION *)(uintptr_t)RD32(MEM(cs + 0x10));
+}
+K(RtlInitializeCriticalSection) {
+    cs_create(ARG(ctx, 0)); /* re-initialising a live section keeps its host section */
+    RET(0, 1);
+}
+static CRITICAL_SECTION *cs_of(uint32_t cs) {
+    if (RD32(MEM(cs + 0x14)) != 0x4353) return cs_create(cs); /* used before initialization */
     return (CRITICAL_SECTION *)(uintptr_t)RD32(MEM(cs + 0x10));
 }
 K(RtlEnterCriticalSection) { EnterCriticalSection(cs_of(ARG(ctx, 0))); RET(0, 1); }
@@ -1370,7 +1379,46 @@ static const KEntry k_table[] = {
 
 static KFn k_by_ordinal[400];
 
+/* RECOMP_WATCH=addr: report the first kernel call made after the guest dword
+   at addr changes (with the caller), a cheap way to bracket a corruption */
+static void watch_check(Ctx *ctx, const char *what) {
+    static int init; static uint32_t addr, last;
+    if (!init) { init = 1; const char *w = getenv("RECOMP_WATCH"); addr = w ? (uint32_t)strtoul(w, NULL, 16) : 0; if (addr) last = RD32(MEM(addr)); }
+    if (!addr) return;
+    uint32_t now = RD32(MEM(addr));
+    if (now == last) return;
+    fprintf(stderr, "watch: [%08x] %08x -> %08x before %s from %08x (esp %08x)\n", addr, last, now, what,
+            RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+    last = now;
+}
+
+/* RECOMP_HEAPCHECK=heapbase: before each kernel call, check that the XAPI
+   heap's free-list bitmap (+0x160) agrees with its 128 list heads (+0x180)
+   and report the first call at which it stops agreeing */
+static void heap_check(Ctx *ctx, const char *what) {
+    static int init, reported; static uint32_t heap;
+    if (!init) { init = 1; const char *h = getenv("RECOMP_HEAPCHECK"); heap = h ? (uint32_t)strtoul(h, NULL, 16) : 0; }
+    if (!heap || reported) return;
+    if (!kmem_block_containing(heap) || RD32(MEM(heap + 0x10)) != 0xeeffeeffu) return; /* not created yet */
+    for (uint32_t i = 1; i < 128; i++) {
+        uint32_t head = heap + 0x180 + 8 * i;
+        int empty = RD32(MEM(head)) == head, bit = (RD8(MEM(heap + 0x160 + i / 8)) >> (i & 7)) & 1;
+        if (empty == bit) {
+            fprintf(stderr, "heapcheck: list %u %s but its bitmap bit is %d, noticed before %s from %08x (esp %08x)\n", i,
+                    empty ? "empty" : "not empty", bit, what, RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+            if (!empty && kmem_block_containing(RD32(MEM(head + 4)))) {
+                uint32_t blk = RD32(MEM(head + 4)) - 8;
+                fprintf(stderr, "  last block %08x: header %08x %08x\n", blk, RD32(MEM(blk)), RD32(MEM(blk + 4)));
+            }
+            reported = 1;
+            return;
+        }
+    }
+}
+
 void kernel_call(Ctx *ctx, uint32_t ordinal) {
+    watch_check(ctx, ordinal_name(ordinal));
+    heap_check(ctx, ordinal_name(ordinal));
     KFn fn = ordinal < 400 ? k_by_ordinal[ordinal] : NULL;
     if (g_trace) trace("kernel %s(%08x, %08x, %08x, %08x) from %08x", ordinal_name(ordinal), ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3), RD32(MEM(RD32(ctx->r + REG_ESP))));
     if (!fn) {

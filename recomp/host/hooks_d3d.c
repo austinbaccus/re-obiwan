@@ -249,16 +249,33 @@ HOOK(D3DDevice_DrawIndexedVerticesUP) {
     RET(D3DDevice_DrawIndexedVerticesUP, 0);
 }
 
-HOOK(D3DTexture_GetLevelDesc) {
-    /* (pThis, Level, pDesc): Format, Type, Usage, Size, Width, Height, Depth (volume textures) */
-    uint32_t o = ARG(ctx, 0), level = ARG(ctx, 1), d = ARG(ctx, 2), w, h, fmt, pitch;
+/* Xbox D3DSURFACE_DESC (see the original Get2DSurfaceDesc at 0x36dd50):
+   Format +0, Type +4, Usage +8, Size +12, MultiSampleType +16, Width +20, Height +24 */
+static void write_surface_desc(uint32_t d, uint32_t o, uint32_t level) {
+    uint32_t w, h, fmt, pitch;
     describe(o, level, &w, &h, &fmt, &pitch);
-    uint32_t depth = is_ours(o) ? RD32(MEM(o + O_DEPTH)) : 0;
-    for (uint32_t i = 0; i < level && depth > 1; i++) depth /= 2;
     uint32_t t = (RD32(MEM(o + O_COMMON)) >> 16) & 7;
-    WR32(MEM(d + 0), fmt); WR32(MEM(d + 4), t == T_SURFACE ? 1 : depth ? 2 : 3); WR32(MEM(d + 8), 0);
-    WR32(MEM(d + 12), pitch * h * (depth ? depth : 1)); WR32(MEM(d + 16), w); WR32(MEM(d + 20), h);
-    WR32(MEM(d + 24), depth ? depth : 1);
+    uint32_t rows = fmt == 0x0C || fmt == 0x0E || fmt == 0x0F ? (h < 4 ? 1 : h / 4) : h;
+    WR32(MEM(d + 0), fmt);
+    WR32(MEM(d + 4), t == T_SURFACE ? 1 : 3); /* D3DRTYPE_SURFACE / TEXTURE */
+    WR32(MEM(d + 8), 0);
+    WR32(MEM(d + 12), pitch * rows);
+    if (!getenv("RECOMP_DESC_XBOX")) {
+        /* The correct layout makes the front end rasterise its fonts, which
+           then corrupts the XAPI heap (issue #6); until that is found,
+           hand out zero sizes the way the old PC-layout stub did, which
+           makes the game skip that work (no text). */
+        WR32(MEM(d + 16), 0); WR32(MEM(d + 20), 0); WR32(MEM(d + 24), 0);
+        return;
+    }
+    WR32(MEM(d + 16), 0x11);                  /* D3DMULTISAMPLE_NONE, as the original reports */
+    WR32(MEM(d + 20), w);
+    WR32(MEM(d + 24), h);
+}
+
+HOOK(D3DTexture_GetLevelDesc) {
+    /* (pThis, Level, pDesc) */
+    write_surface_desc(ARG(ctx, 2), ARG(ctx, 0), ARG(ctx, 1));
     RET(D3DTexture_GetLevelDesc, 0);
 }
 HOOK(D3D_AllocContiguousMemory) {
@@ -355,12 +372,8 @@ HOOK(D3DBaseTexture_GetLevelCount) {
     RET(D3DBaseTexture_GetLevelCount, n ? n : 1);
 }
 HOOK(Get2DSurfaceDesc) {
-    /* (pPixelContainer, Level, pDesc): Format, Type, Usage, Pool, Size, MultiSampleType, Width, Height */
-    uint32_t o = ARG(ctx, 0), level = ARG(ctx, 1), d = ARG(ctx, 2), w, h, fmt, pitch;
-    describe(o, level, &w, &h, &fmt, &pitch);
-    uint32_t t = (RD32(MEM(o + O_COMMON)) >> 16) & 7;
-    WR32(MEM(d + 0), fmt); WR32(MEM(d + 4), t == T_SURFACE ? 1 : 3); WR32(MEM(d + 8), 0); WR32(MEM(d + 12), 0);
-    WR32(MEM(d + 16), pitch * h); WR32(MEM(d + 20), 0); WR32(MEM(d + 24), w); WR32(MEM(d + 28), h);
+    /* (pPixelContainer, Level, pDesc) */
+    write_surface_desc(ARG(ctx, 2), ARG(ctx, 0), ARG(ctx, 1));
     RET(Get2DSurfaceDesc, 0);
 }
 HOOK(D3DTexture_GetSurfaceLevel) {

@@ -110,6 +110,19 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
                 (DWORD)e->ExceptionRecord->ExceptionInformation[1]);
     Ctx *g = kernel_current_ctx();
     if (g) print_guest_state(g);
+    /* RECOMP_CRASHDUMP="addr:len,addr:len": guest memory to print (hex) */
+    for (const char *p = getenv("RECOMP_CRASHDUMP"); p && *p; ) {
+        unsigned a = 0, n = 0;
+        if (sscanf(p, "%x:%x", &a, &n) == 2)
+            for (unsigned i = 0; i < n; i += 4) {
+                if (i % 32 == 0) fprintf(stderr, "%s    %08x:", i ? "\n" : "", a + i);
+                fprintf(stderr, " %08x", RD32(MEM(a + i)));
+            }
+        fprintf(stderr, "\n");
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+    }
     print_host_stack(GetCurrentThread(), c);
     ExitProcess(21);
 }
