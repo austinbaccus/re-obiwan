@@ -71,7 +71,7 @@ static int run(int argc, char **argv) {
     SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
     SetUnhandledExceptionFilter(crash_filter);
     if (getenv("RECOMP_TRACE")) g_trace = 1;
-    if (getenv("RECOMP_TRACE_CALLS")) g_trace_calls = 1;
+    if (getenv("RECOMP_TRACE_CALLS")) g_trace_calls = atoi(getenv("RECOMP_TRACE_CALLS"));
 
     XbeInfo xbe;
     /* Host threads must exist before the XBE replaces the loader's PE header

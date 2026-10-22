@@ -77,6 +77,12 @@ typedef struct {
     uint8_t *stack;
 } Start;
 
+/* --call mode: explicit arguments instead of random state. An argument
+   written as s+HEX is a pointer HEX bytes into scratch, which then holds a
+   fixed byte pattern instead of random words. */
+static uint32_t g_call_args[16], g_call_nargs;
+static int g_call_mode;
+
 static void make_start(Start *s, uint8_t *stack, uint32_t seed) {
     g_rng = seed * 2654435761u + 1;
     memcpy(g_image, g_pristine, g_image_size);
@@ -85,6 +91,11 @@ static void make_start(Start *s, uint8_t *stack, uint32_t seed) {
     s->stack = stack;
     for (int i = 0; i < 8; i++) s->reg[i] = random_value();
     s->reg[4] = (uint32_t)(uintptr_t)(stack + STACK_SIZE - ARG_AREA); /* ESP -> return address */
+    if (g_call_mode) {
+        for (uint32_t i = 0; i < SCRATCH_SIZE; i++) g_scratch[i] = (uint8_t)(i * 7 + 3);
+        for (int i = 0; i < 8; i++) if (i != 4) s->reg[i] = 0;
+        for (uint32_t i = 0; i < g_call_nargs; i++) WR32(stack + STACK_SIZE - ARG_AREA + 4 + 4 * i, g_call_args[i]);
+    }
 }
 
 typedef struct {
@@ -242,6 +253,10 @@ static int test_one(uint32_t addr, uint32_t seed) {
     Result rn, rr;
     DWORD oldprot;
 
+    if (g_call_mode)
+        for (uint32_t i = 0; i < g_call_nargs; i++)
+            if (g_call_args[i] & 0x80000000u)
+                g_call_args[i] = (uint32_t)(uintptr_t)g_scratch + (g_call_args[i] & 0x7fffffffu);
     make_start(&s, stack, seed);
     if (getenv("DIFFTEST_DUMP")) {
         for (int i = 0; i < 8; i++) fprintf(stderr, "%s=%08x ", REGN[i], s.reg[i]);
@@ -329,6 +344,19 @@ static int run(int argc, char **argv) {
     if (argc >= 5 && strcmp(argv[2], "--one") == 0) {
         if (!load_xbe(argv[1])) return 3;
         return test_one(strtoul(argv[3], NULL, 16), (uint32_t)strtoul(argv[4], NULL, 10));
+    }
+    if (argc >= 4 && strcmp(argv[2], "--call") == 0) {
+        /* difftest <xbe> --call <addr> [args...]; s+HEX = scratch pointer */
+        if (!load_xbe(argv[1])) return 3;
+        g_call_mode = 1;
+        uint8_t *probe = _alloca(STACK_SIZE + SCRATCH_SIZE + 64); /* same layout test_one will use */
+        (void)probe;
+        for (int i = 4; i < argc && g_call_nargs < 16; i++) {
+            const char *t = argv[i];
+            if (t[0] == 's' && t[1] == '+') g_call_args[g_call_nargs++] = 0x80000000u | (uint32_t)strtoul(t + 2, NULL, 16);
+            else g_call_args[g_call_nargs++] = (uint32_t)strtoul(t, NULL, 16);
+        }
+        return test_one(strtoul(argv[3], NULL, 16), 1);
     }
     unsigned seeds = argc >= 3 ? (unsigned)atoi(argv[2]) : 3;
     char exe[MAX_PATH], buf[4096];

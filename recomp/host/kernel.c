@@ -200,8 +200,8 @@ uint32_t kmem_alloc(uint32_t size, uint32_t align) {
         a += b->size;
     }
     LeaveCriticalSection(&arena_lock);
-    fprintf(stderr, "guest arena exhausted (%u bytes requested)\n", size);
-    exit(11);
+    trace("guest arena: cannot satisfy %u bytes (the game probes for memory; it gets STATUS_NO_MEMORY)", size);
+    return 0;
 }
 
 static Block *block_of(uint32_t addr) {
@@ -295,6 +295,11 @@ static void read_ansi_string(uint32_t as, char *out, size_t n) {
    path. Returns 0 if the device is unknown. */
 static int resolve_path(uint32_t root_handle, const char *name, char *out, size_t n) {
     char full[1024];
+    if (root_handle == 0xFFFFFFFDu) { /* ObDosDevicesDirectory: names like "d:\file" live under \??\ */
+        snprintf(full, sizeof full, "\\??\\%s", name);
+        return resolve_path(0, full, out, n);
+    }
+    if (root_handle == 0xFFFFFFFCu) root_handle = 0; /* ObWin32NamedObjectsDirectory: no files there */
     if (root_handle) {
         Obj *o = handle_get(root_handle);
         if (!o || (o->kind != OBJ_DIR && o->kind != OBJ_SYMLINK)) return 0;
@@ -369,9 +374,15 @@ static uint64_t interrupt_time(void) {
 #define TLS_DATA_OFF 0x28
 #define GUEST_STACK_HEADROOM 0x100 /* above StackBase: TLS slot at fs:[4] - 20 */
 
+static uint32_t kmem_alloc_or_die(uint32_t size, uint32_t align) {
+    uint32_t a = kmem_alloc(size, align);
+    if (!a) { fprintf(stderr, "guest arena exhausted (%u bytes for the runtime)\n", size); exit(11); }
+    return a;
+}
+
 uint32_t kernel_create_kpcr(uint32_t stack_base, uint32_t stack_limit, uint32_t tls) {
-    uint32_t kpcr = kmem_alloc(KPCR_SIZE, 16);
-    uint32_t kthread = kmem_alloc(KTHREAD_SIZE, 16);
+    uint32_t kpcr = kmem_alloc_or_die(KPCR_SIZE, 16);
+    uint32_t kthread = kmem_alloc_or_die(KTHREAD_SIZE, 16);
     WR32(MEM(kpcr + 0x00), 0xffffffff);
     WR32(MEM(kpcr + 0x04), stack_base);
     WR32(MEM(kpcr + 0x08), stack_limit);
@@ -452,7 +463,7 @@ void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t 
        at StackBase - TlsDataSize, which is what XAPI's _tls_index (-size/4)
        addresses through fs:[4]. XapiThreadStartup fills it in. */
     uint32_t tls_round = (tls_size + 15) & ~15u;
-    uint32_t stack = kmem_alloc(stack_size + tls_round + GUEST_STACK_HEADROOM, 4096);
+    uint32_t stack = kmem_alloc_or_die(stack_size + tls_round + GUEST_STACK_HEADROOM, 4096);
     uint32_t tls = stack + stack_size;
     uint32_t stack_base = tls + tls_size;
     uint32_t kpcr = kernel_create_kpcr(stack_base, stack, tls);
@@ -489,12 +500,11 @@ K(NtAllocateVirtualMemory) {
     (void)zero_bits; (void)prot;
     uint32_t base = RD32(MEM(pbase)), size = RD32(MEM(psize));
     size = (size + 0xfff) & ~0xfffu;
-    if (type & 0x2000) { /* MEM_RESERVE */
-        if (!base) base = kmem_alloc(size, 4096);
-        /* reserving at a given address inside an earlier reservation is fine: identity */
-    } else if (type & 0x1000) { /* MEM_COMMIT */
-        if (!base) base = kmem_alloc(size, 4096);
-        /* committing within an existing reservation: memory is already there */
+    if (!base) {
+        /* MEM_RESERVE and MEM_COMMIT both get real memory; committing or
+           reserving inside an earlier range is a no-op (identity mapping) */
+        base = kmem_alloc(size, 4096);
+        if (!base) RET(STATUS_NO_MEMORY_, 5);
     }
     WR32(MEM(pbase), base);
     WR32(MEM(psize), size);
@@ -521,7 +531,7 @@ K(NtQueryVirtualMemory) {
 }
 K(MmAllocateContiguousMemoryEx) {
     uint32_t size = ARG(ctx, 0), align = ARG(ctx, 3);
-    uint32_t a = kmem_alloc(size, align ? align + 1 : 4096);
+    uint32_t a = kmem_alloc(size, align ? align + 1 : 4096); /* 0 on failure, like the kernel */
     trace("MmAllocateContiguousMemoryEx %x -> %08x", size, a);
     RET(a, 5);
 }
@@ -915,9 +925,13 @@ K(NtReadFile) {
         int64_t off = (int64_t)RD64(MEM(poff));
         if (off >= 0) { LARGE_INTEGER li; li.QuadPart = off; SetFilePointerEx(o->host, li, NULL, FILE_BEGIN); }
     }
+    LARGE_INTEGER before = {0}, zero = {0};
+    SetFilePointerEx(o->host, zero, &before, FILE_CURRENT);
     DWORD got = 0;
     BOOL ok = ReadFile(o->host, MEM(buf), len, &got, NULL);
     NTSTATUS_ st = !ok ? STATUS_UNSUCCESSFUL_ : got == 0 && len ? STATUS_END_OF_FILE_ : STATUS_SUCCESS_;
+    trace("  read %s: %u bytes at %lld -> %lu (buf %08x, offset arg %s)", o->path, len, before.QuadPart, got, buf,
+          poff ? ((int64_t)RD64(MEM(poff)) < 0 ? "current" : "explicit") : "none");
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), got); }
     RET(st, 8);
 }
@@ -961,8 +975,10 @@ K(NtSetInformationFile) {
     if (!o) RET(STATUS_INVALID_HANDLE_, 5);
     NTSTATUS_ st = STATUS_SUCCESS_;
     LARGE_INTEGER li;
+    trace("  set-info class %u on %s", cls, o->path);
     switch (cls) {
-    case 14: li.QuadPart = (int64_t)RD64(MEM(info)); if (o->kind == OBJ_FILE) SetFilePointerEx(o->host, li, NULL, FILE_BEGIN); break;
+    case 14: li.QuadPart = (int64_t)RD64(MEM(info)); if (o->kind == OBJ_FILE) SetFilePointerEx(o->host, li, NULL, FILE_BEGIN);
+             trace("  seek to %lld", li.QuadPart); break;
     case 20: case 19: /* FileEndOfFile / FileAllocation */
         li.QuadPart = (int64_t)RD64(MEM(info));
         if (o->kind == OBJ_FILE) { LARGE_INTEGER cur, z = {0}; SetFilePointerEx(o->host, z, &cur, FILE_CURRENT);

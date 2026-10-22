@@ -148,6 +148,14 @@ void rt_call(Ctx *ctx, uint32_t addr) {
     fn(ctx);
 }
 
+void rt_trace_call(Ctx *ctx, uint32_t addr) {
+    uint32_t esp = RD32(ctx->r + REG_ESP);
+    const char *name = "";
+    for (unsigned i = 0; i < g_functab_count; i++) if (g_functab[i].addr == addr) { name = g_functab[i].name; break; }
+    fprintf(stderr, "  call %08x %s (ecx %08x; args %08x %08x %08x %08x)\n", addr, name, RD32(ctx->r + REG_ECX),
+            RD32(MEM(esp)), RD32(MEM(esp + 4)), RD32(MEM(esp + 8)), RD32(MEM(esp + 12)));
+}
+
 /* A jump out of the current function: run the target as if tail-called. */
 void rt_jump(Ctx *ctx, uint32_t addr) { rt_call(ctx, addr); }
 

@@ -175,8 +175,10 @@ class FunctionTranslator:
         return f'{{ {self.call_expr(addr)} return; }}'
 
     def call_expr(self, addr):
+        # RECOMP_TRACE_CALLS=2 logs direct calls too (see rt_trace_call)
+        pre = f'if (g_trace_calls > 1) rt_trace_call(ctx, 0x{addr:08x}u); '
         if addr in self.known:
-            return f'f_{addr:08x}(ctx);'
+            return f'{pre}f_{addr:08x}(ctx);'
         return f'rt_call(ctx, 0x{addr:08x}u);'
 
     # ---- translation ----------------------------------------------------
