@@ -1,0 +1,99 @@
+# Notes for a static recompiler
+
+What the map implies for translating `default.xbe` (32-bit x86, Pentium III
+733 MHz) into a native Windows 11 program. Numbers come from a full pass over
+Ghidra's listing (1,079,975 instructions).
+
+## Recompile, replace, or drop
+
+| Part | Range | Plan |
+|---|---|---|
+| Game + Tanis engine | most of `.text` | **recompile** |
+| C++ EH funclets, static initializers | `0x00320EEC`..`0x003683F9` | **recompile** (seeded from tables, see code-map.md) |
+| MSVC runtime | `0x002CBD20`..`0x002DDF29`, `0x00320A10`..`0x00320EEC` | recompile as-is at first (it is plain x86 with no OS calls beyond XAPI), or map the common functions (`malloc`, `memcpy`, `_ftol`, string, stdio) to host CRT later |
+| XAPILIB | `.text` `0x0002A6D6`..`0x0002E836`, `~0x002DE752`..`0x002E09FF`, `XPP` | **replace** with a host implementation at the function level (files, threads, launch data, input, memory units, save games) |
+| D3D8 | `D3D` | **replace**: high-level Direct3D 8 on D3D12/Vulkan, intercepting at the named `D3DDevice_*` / `D3DResource_*` / `D3DTexture_*` entry points. The library writes NV2A push buffers directly, so recompiling it would mean emulating the GPU |
+| XGraphics | `XGRPH` | **replace** (swizzle/unswizzle helpers are simple to reimplement) |
+| D3DX8 | `D3DX` | **replace** with host equivalents, or recompile if it turns out to be pure math. It embeds zlib 1.1.3, libpng and IJG libjpeg, which can be linked from source instead |
+| DirectSound | `DSOUND` | **replace** with a host audio backend at the `IDirectSound*` / `CMcpx*` API level. The library drives the MCPX APU through MMIO (`0xFE800000`..) |
+| `DOLBY` | `DOLBY` | **drop**: APU DSP code, never executed by the CPU |
+| Kernel | thunk table `0x003BC220` | **implement** only what remains reachable after the above are replaced |
+
+The cleanest boundary is the set of named XDK entry points: every call from
+game code into a library section, or into a named XAPI function, becomes a
+call into the host runtime. Enumerate those call sites from the call graph
+before writing any HLE code; that list is the real API surface.
+
+## Instruction-level hazards
+
+| Hazard | Count | Where | Consequence |
+|---|---|---|---|
+| x87 floating point | ~129,000 | 125k in `.text` | The game does nearly all float math on x87. Plain `float`/`double` in C gives slightly different results from 80-bit intermediate precision; the FPU control word is set at startup (`__ctrlfp` is linked), which decides precision and rounding. Start with host `double` and compare against an emulator only where physics or demo playback diverge (attract-mode demos replay recorded `dt` and input, so they are a good determinism test) |
+| SSE | ~450 | mostly `D3D`, `XGRPH`, plus 253 in `.text` | small; Pentium III SSE1 only |
+| MMX | ~1,270 | almost all in `D3DX` (1,198) | replaced with the library |
+| Indirect calls | 11,528 | 10,637 in `.text` | overwhelmingly C++ virtual calls (`call [reg+off]`). Needs a runtime lookup from guest address to host function for any target not proven statically; recovering vtables from RTTI (885 types) resolves most targets |
+| Indirect jumps | 878 | 854 in `.text` | switch tables (inline in `.text`) plus jumps through the kernel thunk table |
+| `fs:` accesses | ~9,000 | everywhere | SEH frame chain at `fs:[0]` in almost every function with C++ objects on the stack; TLS through `fs:[0x28]`/`fs:[0x4]`. Needs a per-thread emulated KPCR block |
+| `int3` | ~900 | game code | QA-build asserts; map to a fatal error with the guest address |
+| `rdtsc` | 2 | `.text` | map to a host timer scaled to 733 MHz |
+| `setjmp`/`longjmp` | 3 + 3 calls | `D3DX` only | libpng/libjpeg error paths; gone if D3DX is replaced |
+| privileged / port I/O | handful | `D3D` only (and false decodes in data) | gone with D3D replacement |
+
+## C++ exceptions and SEH
+
+`__CxxFrameHandler` (`0x002CF914`) is referenced by about 1,800 `__ehhandler$`
+stubs, so EH state is maintained in most game functions even if few of them
+throw. Two workable approaches:
+
+1. Keep the guest model: emulate the `fs:[0]` registration chain and run the
+   original `__CxxFrameHandler`/`RtlUnwind` path in recompiled code. Faithful,
+   no need to understand each function.
+2. Prove that game code never throws (look for `_CxxThrowException` and
+   `RaiseException` call sites; neither was named by FID yet) and then treat the
+   EH state writes as dead stores and only call unwind funclets on `longjmp`-like
+   exits, of which there are none in game code.
+
+Option 2 is likely: game engines of this era built with exceptions enabled for
+the STL rarely throw. Confirm before relying on it.
+
+## Memory model
+
+- The image is fixed at `0x00010000`..`0x005295E0` with no relocations, so the
+  simplest correct layout reserves that exact range in the host process (or
+  adds a constant base to every guest address). Windows normally leaves the
+  low 64 KB unmapped and the range above it is free in a 32-bit or
+  large-address-aware process; for a 64-bit host, a 4 GB guest window with a
+  base pointer is the usual design.
+- Xbox user space is 64 MB of RAM, with contiguous memory also visible at
+  `0x80000000` (physical mirror) for GPU/APU buffers. Game code has ~80
+  immediates in that range; they need to land in the same window.
+- Heaps come from `NtAllocateVirtualMemory`, `MmAllocateContiguousMemory[Ex]`
+  and `ExAllocatePool*` (via XAPI and the CRT). Implement them over the guest
+  window rather than the host heap so guest pointers stay 32-bit.
+
+## Threads and timing
+
+- The game itself runs on the XAPI main thread created at `0x0002AC74`. D3D8,
+  DSOUND and the USB stack create more threads, DPCs and interrupt handlers;
+  those go away with HLE replacements. Check whether game code calls
+  `CreateThread` itself (for streaming, `__AudioStreamList.txt` suggests
+  streamed audio) before assuming a single-threaded game.
+- The frame tick clamps `dt` to 0.1 s and is variable-step, so running faster
+  than 60 Hz on PC should mostly work; anything that assumes 30/60 Hz will show
+  up in the per-subsystem tick functions listed in code-map.md.
+
+## Suggested next steps
+
+1. Build the call graph from game code into every XDK library section and
+   named XAPI/kernel function; publish the list of library entry points the
+   game uses (the HLE surface).
+2. Recover vtables from RTTI and add them to Ghidra (class names, vtable slot
+   functions). This also turns most indirect calls into known target sets.
+3. Classify the unmatched block `0x002E0BB0`..`0x00320A02` (game vs. libjpeg or
+   other middleware).
+4. Teach Ghidra about the EH funclets and `$E` initializers so the function
+   list covers all of `.text` (the ~300 KB of "undefined" bytes in `.text` is
+   mostly those).
+5. Pick the recompiler architecture (one C function per guest function with a
+   guest register file, as in XenonRecomp / N64Recomp, is the proven shape for
+   this size of binary) and prototype it on a small leaf subsystem.
