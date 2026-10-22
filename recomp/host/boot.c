@@ -18,6 +18,7 @@
 #include "guest.h"
 #include "kernel.h"
 #include "xbe_image.h"
+#include "render.h"
 
 void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
 
@@ -159,10 +160,26 @@ static int run(int argc, char **argv) {
     XbeInfo xbe;
     /* Host threads must exist before the XBE replaces the loader's PE header
        at 0x10000: Windows reads it when creating threads (see kernel.c). */
+    /* The window and the Direct3D device are created before the XBE is loaded:
+       afterwards Direct3D's device creation blocks (its driver threads never
+       come up in this process), see render_d3d9.c. */
+    if (!getenv("RECOMP_HEADLESS")) r_init(640, 480);
     kernel_prepare_threads();
     DWORD old;
     VirtualProtect((void *)0x10000, 0x51a000, PAGE_EXECUTE_READWRITE, &old);
+    /* Windows reads the executable's PE headers through the PEB's
+       ImageBaseAddress when creating threads (default stack sizes), so once
+       the XBE has replaced them at 0x10000, CreateThread fails with error 193
+       for everyone, including Direct3D's driver. Keep a copy of the headers
+       and point the PEB at it. */
+    void *headers = VirtualAlloc(NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    memcpy(headers, (void *)0x10000, 0x1000);
     if (!xbe_load(argv[1], &xbe)) return 3;
+    *(void **)((char *)__readfsdword(0x30) + 8) = headers; /* PEB->ImageBaseAddress */
+    {
+        HANDLE t = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)Sleep, NULL, 0, NULL);
+        if (t) CloseHandle(t); else fprintf(stderr, "obiwan: CreateThread still fails after the image load (error %lu)\n", GetLastError());
+    }
     kmem_init(GUEST_RAM_START, GUEST_RAM_SIZE);
 
     char game_dir[MAX_PATH], hdd_dir[MAX_PATH], exe[MAX_PATH];
@@ -184,7 +201,12 @@ static int run(int argc, char **argv) {
        it creates the real main thread and returns. */
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
-    for (;;) Sleep(1000);
+    /* the window belongs to this thread: pump its messages while the game runs */
+    for (;;) {
+        MSG m;
+        while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
+        Sleep(10);
+    }
 }
 
 __declspec(dllexport) void game_main(void) {

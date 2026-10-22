@@ -1,0 +1,36 @@
+/* Host renderer behind the Xbox D3D8 hooks (hooks_d3d.c). The hooks keep the
+   guest-visible resource objects; this layer turns their contents and the
+   device state into draw calls on a host API (Direct3D 9 for now: it still
+   has the fixed-function pipeline the Xbox API maps onto almost one to one). */
+#pragma once
+#include <stdint.h>
+
+int  r_init(uint32_t width, uint32_t height);
+int  r_ready(void); /* a device exists */
+void r_present(void);
+void r_clear(uint32_t xbox_flags, uint32_t color, float z, uint32_t stencil);
+
+/* Xbox D3DDevice_SetRenderState_Simple: an NV2A method address and the value
+   in the console's encoding; _Deferred: an Xbox D3DRS index with a D3D value;
+   the dedicated setters pass a PC D3DRS number through r_set_rs. */
+void r_set_rs_simple(uint32_t method, uint32_t value);
+void r_set_rs_deferred(uint32_t xbox_state, uint32_t value);
+void r_set_rs(uint32_t pc_state, uint32_t value);
+void r_set_tss(uint32_t stage, uint32_t xbox_type, uint32_t value);
+void r_set_texture(uint32_t stage, uint32_t guest_object);
+void r_set_transform(uint32_t state, const float *m);
+void r_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz, float maxz);
+void r_set_vertex_shader(uint32_t handle);
+void r_set_pixel_shader(uint32_t handle);
+void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);
+void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
+void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);
+void r_draw_indexed(uint32_t prim, uint32_t vertex_count, uint32_t index_data);
+
+/* the guest wrote to a pixel container (Lock, Register) or freed it */
+void r_texture_dirty(uint32_t guest_object);
+void r_resource_freed(uint32_t guest_object);
+
+/* hooks_d3d.c: dimensions of a guest pixel container level */
+void d3d_describe(uint32_t object, uint32_t level, uint32_t *w, uint32_t *h, uint32_t *fmt, uint32_t *pitch);
+uint32_t d3d_level_offset(uint32_t object, uint32_t level);

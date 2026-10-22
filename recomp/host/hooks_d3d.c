@@ -15,6 +15,11 @@
 
 #include "funcs.h"
 #include "kernel.h"
+#include "render.h"
+
+/* PC D3DRENDERSTATETYPE numbers for the dedicated setters */
+enum { PC_RS_ZENABLE = 7, PC_RS_CULLMODE = 22, PC_RS_FOGCOLOR = 34, PC_RS_STENCILENABLE = 52, PC_RS_STENCILFAIL = 53, PC_RS_TEXTUREFACTOR = 60 };
+static int g_render; /* a host renderer is up (RECOMP_HEADLESS=1 keeps the old counting stubs) */
 
 #define HOOK(name) void hook_##name(Ctx *ctx)
 #define RET(name, v) do { trace("hook %s -> %08x (pops %d)", #name, (uint32_t)(v), HOOKARGS_##name); SET_EAX(ctx, (v)); RET_STDCALL(ctx, HOOKARGS_##name); return; } while (0)
@@ -74,6 +79,8 @@ static void describe(uint32_t o, uint32_t level, uint32_t *w, uint32_t *h, uint3
     else *pitch = *w * bytes_per_pixel(*fmt);
 }
 
+void d3d_describe(uint32_t o, uint32_t level, uint32_t *w, uint32_t *h, uint32_t *fmt, uint32_t *pitch) { describe(o, level, w, h, fmt, pitch); }
+
 static uint32_t level_offset(uint32_t o, uint32_t level) {
     uint32_t off = 0, w, h, fmt, pitch;
     for (uint32_t i = 0; i < level; i++) {
@@ -82,6 +89,8 @@ static uint32_t level_offset(uint32_t o, uint32_t level) {
     }
     return off;
 }
+
+uint32_t d3d_level_offset(uint32_t o, uint32_t level) { return level_offset(o, level); }
 
 static uint32_t new_pixel_container(uint32_t type, uint32_t w, uint32_t h, uint32_t depth, uint32_t levels, uint32_t fmt) {
     if (!levels) { levels = 1; for (uint32_t m = w > h ? w : h; m > 1; m /= 2) levels++; }
@@ -119,6 +128,7 @@ HOOK(Direct3D_CreateDevice) {
     if (ppdevice) WR32(MEM(ppdevice), g_device);
     for (int i = 0; i < 512; i++) { memset(g_transforms[i], 0, 64); g_transforms[i][0] = g_transforms[i][5] = g_transforms[i][10] = g_transforms[i][15] = 1.0f; }
     fprintf(stderr, "d3d: device created, %ux%u back buffer\n", w, h);
+    if (!getenv("RECOMP_HEADLESS")) g_render = r_ready() ? 1 : r_init(w, h);
     if (getenv("RECOMP_TRACE_FROM_D3D")) g_trace_calls = 2; /* debugging aid: full call trace from here on */
     RET(Direct3D_CreateDevice, 0);
 }
@@ -132,10 +142,15 @@ HOOK(D3DDevice_Release) { RET(D3DDevice_Release, 0); }
 HOOK(D3DDevice_Present) {
     g_frames++;
     if (g_frames <= 5 || g_frames % 60 == 0) fprintf(stderr, "d3d: present #%u\n", g_frames);
+    if (g_render) r_present();
     RET(D3DDevice_Present, 0);
 }
 HOOK(D3DDevice_PersistDisplay) { RET(D3DDevice_PersistDisplay, 0); }
-HOOK(D3DDevice_Clear) { RET(D3DDevice_Clear, 0); }
+HOOK(D3DDevice_Clear) {
+    /* (Count, pRects, Flags, Color, Z, Stencil) */
+    if (g_render) { uint32_t zbits = ARG(ctx, 4); float z; memcpy(&z, &zbits, 4); r_clear(ARG(ctx, 2), ARG(ctx, 3), z, ARG(ctx, 5)); }
+    RET(D3DDevice_Clear, 0);
+}
 HOOK(D3DDevice_InsertFence) { RET(D3DDevice_InsertFence, 1); }
 HOOK(D3DDevice_BlockOnFence) { RET(D3DDevice_BlockOnFence, 0); }
 
@@ -153,6 +168,7 @@ HOOK(D3DDevice_SetRenderTarget) { if (ARG(ctx, 0)) g_rendertarget = ARG(ctx, 0);
 HOOK(D3DDevice_SetTransform) {
     uint32_t state = ARG(ctx, 0) & 511, pm = ARG(ctx, 1);
     if (pm) memcpy(g_transforms[state], MEM(pm), 64);
+    if (g_render && pm) r_set_transform(ARG(ctx, 0), g_transforms[state]);
     RET(D3DDevice_SetTransform, 0);
 }
 HOOK(D3DDevice_GetTransform) {
@@ -162,26 +178,34 @@ HOOK(D3DDevice_GetTransform) {
 }
 
 /* state: the game also writes D3D's state arrays directly; nothing to do */
-HOOK(D3DDevice_SetViewport) { RET(D3DDevice_SetViewport, 0); }
-HOOK(D3DDevice_SetRenderState_Simple) { RET(D3DDevice_SetRenderState_Simple, 0); }
-HOOK(D3DDevice_SetRenderState_Deferred) { RET(D3DDevice_SetRenderState_Deferred, 0); }
-HOOK(D3DDevice_SetRenderState_CullMode) { RET(D3DDevice_SetRenderState_CullMode, 0); }
-HOOK(D3DDevice_SetRenderState_FogColor) { RET(D3DDevice_SetRenderState_FogColor, 0); }
+HOOK(D3DDevice_SetViewport) {
+    uint32_t vp = ARG(ctx, 0);
+    if (g_render && vp) {
+        float minz, maxz; memcpy(&minz, MEM(vp + 16), 4); memcpy(&maxz, MEM(vp + 20), 4);
+        r_set_viewport(RD32(MEM(vp)), RD32(MEM(vp + 4)), RD32(MEM(vp + 8)), RD32(MEM(vp + 12)), minz, maxz);
+    }
+    RET(D3DDevice_SetViewport, 0);
+}
+HOOK(D3DDevice_SetRenderState_Simple) { if (g_render) r_set_rs_simple(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetRenderState_Simple, 0); }
+HOOK(D3DDevice_SetRenderState_Deferred) { if (g_render) r_set_rs_deferred(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetRenderState_Deferred, 0); }
+HOOK(D3DDevice_SetRenderState_CullMode) { if (g_render) r_set_rs(PC_RS_CULLMODE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_CullMode, 0); }
+HOOK(D3DDevice_SetRenderState_FogColor) { if (g_render) r_set_rs(PC_RS_FOGCOLOR, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_FogColor, 0); }
 HOOK(D3DDevice_SetRenderState_ShadowFunc) { RET(D3DDevice_SetRenderState_ShadowFunc, 0); }
-HOOK(D3DDevice_SetRenderState_StencilEnable) { RET(D3DDevice_SetRenderState_StencilEnable, 0); }
-HOOK(D3DDevice_SetRenderState_StencilFail) { RET(D3DDevice_SetRenderState_StencilFail, 0); }
-HOOK(D3DDevice_SetRenderState_TextureFactor) { RET(D3DDevice_SetRenderState_TextureFactor, 0); }
+HOOK(D3DDevice_SetRenderState_StencilEnable) { if (g_render) r_set_rs(PC_RS_STENCILENABLE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_StencilEnable, 0); }
+HOOK(D3DDevice_SetRenderState_StencilFail) { if (g_render) r_set_rs(PC_RS_STENCILFAIL, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_StencilFail, 0); }
+HOOK(D3DDevice_SetRenderState_TextureFactor) { if (g_render) r_set_rs(PC_RS_TEXTUREFACTOR, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_TextureFactor, 0); }
 HOOK(D3DDevice_SetRenderState_ZBias) { RET(D3DDevice_SetRenderState_ZBias, 0); }
-HOOK(D3DDevice_SetRenderState_ZEnable) { RET(D3DDevice_SetRenderState_ZEnable, 0); }
-HOOK(D3DDevice_SetTextureStageStateDeferred) { RET(D3DDevice_SetTextureStageStateDeferred, 0); }
-HOOK(D3DDevice_SetTextureState_BorderColor) { RET(D3DDevice_SetTextureState_BorderColor, 0); }
-HOOK(D3DDevice_SetTextureState_TexCoordIndex) { RET(D3DDevice_SetTextureState_TexCoordIndex, 0); }
-HOOK(D3DDevice_SetTexture) { RET(D3DDevice_SetTexture, 0); }
-HOOK(D3DDevice_SetStreamSource) { RET(D3DDevice_SetStreamSource, 0); }
-HOOK(D3DDevice_SetIndices) { RET(D3DDevice_SetIndices, 0); }
-HOOK(D3DDevice_SetVertexShader) { RET(D3DDevice_SetVertexShader, 0); }
+HOOK(D3DDevice_SetRenderState_ZEnable) { if (g_render) r_set_rs(PC_RS_ZENABLE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_ZEnable, 0); }
+HOOK(D3DDevice_SetTextureStageStateDeferred) { if (g_render) r_set_tss(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_SetTextureStageStateDeferred, 0); }
+HOOK(D3DDevice_SetTextureState_BorderColor) { if (g_render) r_set_tss(ARG(ctx, 0), 29, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_BorderColor, 0); }
+HOOK(D3DDevice_SetTextureState_TexCoordIndex) { if (g_render) r_set_tss(ARG(ctx, 0), 28, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_TexCoordIndex, 0); }
+HOOK(D3DDevice_SetTexture) { if (g_render) r_set_texture(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetTexture, 0); }
+HOOK(D3DDevice_SetStreamSource) { if (g_render) r_set_stream(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_SetStreamSource, 0); }
+static uint32_t g_indices, g_index_base;
+HOOK(D3DDevice_SetIndices) { g_indices = ARG(ctx, 0); g_index_base = ARG(ctx, 1); RET(D3DDevice_SetIndices, 0); }
+HOOK(D3DDevice_SetVertexShader) { if (g_render) r_set_vertex_shader(ARG(ctx, 0)); RET(D3DDevice_SetVertexShader, 0); }
 HOOK(D3DDevice_SetVertexShaderConstant) { RET(D3DDevice_SetVertexShaderConstant, 0); }
-HOOK(D3DDevice_SetPixelShader) { RET(D3DDevice_SetPixelShader, 0); }
+HOOK(D3DDevice_SetPixelShader) { if (g_render) r_set_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_SetPixelShader, 0); }
 HOOK(D3DDevice_SetPixelShaderConstant) { RET(D3DDevice_SetPixelShaderConstant, 0); }
 static uint32_t g_handles = 0x1000;
 HOOK(D3DDevice_CreatePixelShader) { if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), g_handles++); RET(D3DDevice_CreatePixelShader, 0); }
@@ -191,11 +215,19 @@ HOOK(D3DDevice_CaptureStateBlock) { RET(D3DDevice_CaptureStateBlock, 0); }
 HOOK(D3DDevice_ApplyStateBlock) { RET(D3DDevice_ApplyStateBlock, 0); }
 HOOK(D3DDevice_DeleteStateBlock) { RET(D3DDevice_DeleteStateBlock, 0); }
 
-/* drawing: nothing yet */
-HOOK(D3DDevice_DrawVertices) { RET(D3DDevice_DrawVertices, 0); }
-HOOK(D3DDevice_DrawVerticesUP) { RET(D3DDevice_DrawVerticesUP, 0); }
-HOOK(D3DDevice_DrawIndexedVertices) { RET(D3DDevice_DrawIndexedVertices, 0); }
-HOOK(D3DDevice_DrawIndexedVerticesUP) { RET(D3DDevice_DrawIndexedVerticesUP, 0); }
+/* drawing */
+HOOK(D3DDevice_DrawVertices) { if (g_render) r_draw(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_DrawVertices, 0); }
+HOOK(D3DDevice_DrawVerticesUP) { if (g_render) r_draw_up(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3)); RET(D3DDevice_DrawVerticesUP, 0); }
+HOOK(D3DDevice_DrawIndexedVertices) {
+    /* (PrimitiveType, VertexCount, pIndexData) */
+    if (g_render) r_draw_indexed(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2));
+    RET(D3DDevice_DrawIndexedVertices, 0);
+}
+HOOK(D3DDevice_DrawIndexedVerticesUP) {
+    static int warned;
+    if (!warned++) fprintf(stderr, "d3d: DrawIndexedVerticesUP is not drawn yet\n");
+    RET(D3DDevice_DrawIndexedVerticesUP, 0);
+}
 
 HOOK(D3DTexture_GetLevelDesc) {
     /* (pThis, Level, pDesc): Format, Type, Usage, Size, Width, Height, Depth (volume textures) */
@@ -271,6 +303,7 @@ HOOK(D3DResource_Release) {
     if ((c & 0xffff) == 0 && is_ours(o) && o != g_backbuffer && o != g_depth && o != g_rendertarget) {
         /* last reference: free the backing memory and the object, as D3D would */
         if (RD32(MEM(o + O_BYTES))) kmem_free(RD32(MEM(o + O_DATA))); /* surfaces from GetSurfaceLevel alias their texture */
+        if (g_render) r_resource_freed(o);
         WR32(MEM(o + O_MAGICOFF), 0);
         kmem_free(o);
     }
@@ -280,6 +313,7 @@ HOOK(D3DResource_Register) {
     /* resources from the game's bundles: Data holds an offset into the base the game passes */
     uint32_t o = ARG(ctx, 0), base = ARG(ctx, 1);
     WR32(MEM(o + O_DATA), RD32(MEM(o + O_DATA)) + base);
+    if (g_render) r_texture_dirty(o);
     RET(D3DResource_Register, 0);
 }
 HOOK(D3DResource_GetType) {
@@ -326,6 +360,7 @@ static void lock_rect(uint32_t o, uint32_t level, uint32_t plocked) {
     describe(o, level, &w, &h, &fmt, &pitch);
     WR32(MEM(plocked), pitch);
     WR32(MEM(plocked + 4), RD32(MEM(o + O_DATA)) + level_offset(o, level));
+    if (g_render) r_texture_dirty(o);
 }
 HOOK(D3DTexture_LockRect) { lock_rect(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DTexture_LockRect, 0); }
 HOOK(D3DSurface_LockRect) { lock_rect(ARG(ctx, 0), 0, ARG(ctx, 1)); RET(D3DSurface_LockRect, 0); }
