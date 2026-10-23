@@ -243,6 +243,7 @@ HOOK(XInputGetState) {
             if (GetAsyncKeyState(VK_SPACE) & 0x8000) an[1] = 255;
             if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
             if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+            debug_keys();
         }
         buttons |= scripted_buttons(&an[0], &an[1], &an[2], &an[3], &lx, &ly);
     }

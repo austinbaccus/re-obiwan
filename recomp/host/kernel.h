@@ -63,6 +63,7 @@ void host_watch(uint32_t addr, uint32_t len); /* boot.c: log writes to guest byt
 void native_init(void); /* native.c: RECOMP_NATIVE, original x86 code for chosen functions (debugging) */
 int host_override(uint32_t addr, GuestFn replacement); /* native.c: a host function in place of a recompiled one */
 void widescreen_init(void); /* widescreen.c: wider camera views for RECOMP_RES wider than 4:3 */
+void debug_keys(void);      /* debugkeys.c: F1 restores health; call on the game's thread */
 void kernel_frame_presented(void); /* RECOMP_FIXEDFPS: advance the guest's virtual clock a frame */
 extern int g_trace; /* RECOMP_TRACE=1: log every kernel call and hook */
 void trace(const char *fmt, ...);

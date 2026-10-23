@@ -154,6 +154,8 @@ next to the executable. Environment switches for unattended runs:
   layer (HUD, text, menus) stays 4:3 in the middle, clipped to it.
   Untextured draws over the whole screen (fades, flashes, cinema bars)
   still cover the full width.
+- F1: every player's health back to full, for testing (a dead player stays
+  dead). The fields it uses are in `docs/recomp/game-structures.md`.
 - F3 (or `RECOMP_FPS=1` from the start): a performance overlay in the top
   left corner (Direct3D 11): frames per second, frame time and the worst
   one, the CPU time of the thread that presents, and where a frame goes:
