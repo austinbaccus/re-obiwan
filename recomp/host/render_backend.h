@@ -13,8 +13,9 @@
     R(int, r_ready, (void), ())                                                                                        \
     R(int, r_has_focus, (void), ())                                                                                        R(float, r_wide, (void), ())                                                                                       \
     V(r_present, (void), ())                                                                                           \
-    V(r_set_render_target, (int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h), \
-      (back_buffer, w, h, z_kind, z_data, z_w, z_h))                                                                   \
+    V(r_set_render_target, (int back_buffer, uint32_t w, uint32_t h, uint32_t color_data, int z_kind, uint32_t z_data,   \
+                            uint32_t z_w, uint32_t z_h),                                                               \
+      (back_buffer, w, h, color_data, z_kind, z_data, z_w, z_h))                                                       \
     V(r_clear, (uint32_t xbox_flags, uint32_t color, float z, uint32_t stencil), (xbox_flags, color, z, stencil))      \
     V(r_set_rs_simple, (uint32_t method, uint32_t value), (method, value))                                             \
     V(r_set_rs_deferred, (uint32_t xbox_state, uint32_t value), (xbox_state, value))                                   \
@@ -38,6 +39,8 @@
     V(r_draw_up, (uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride), (prim, vertex_count, data, stride)) \
     V(r_draw_indexed, (uint32_t prim, uint32_t vertex_count, uint32_t index_data, uint32_t base_vertex),               \
       (prim, vertex_count, index_data, base_vertex))                                                                   \
+    V(r_draw_indexed_up, (uint32_t prim, uint32_t vertex_count, uint32_t index_data, uint32_t data, uint32_t stride),  \
+      (prim, vertex_count, index_data, data, stride))                                                                  \
     R(uint32_t, r_create_state_block, (void), ())                                                                      \
     V(r_capture_state_block, (uint32_t token), (token))                                                                \
     V(r_apply_state_block, (uint32_t token), (token))                                                                  \
@@ -75,6 +78,7 @@
 #define r_draw RB_CAT(RENDER_BACKEND, r_draw)
 #define r_draw_up RB_CAT(RENDER_BACKEND, r_draw_up)
 #define r_draw_indexed RB_CAT(RENDER_BACKEND, r_draw_indexed)
+#define r_draw_indexed_up RB_CAT(RENDER_BACKEND, r_draw_indexed_up)
 #define r_create_state_block RB_CAT(RENDER_BACKEND, r_create_state_block)
 #define r_capture_state_block RB_CAT(RENDER_BACKEND, r_capture_state_block)
 #define r_apply_state_block RB_CAT(RENDER_BACKEND, r_apply_state_block)

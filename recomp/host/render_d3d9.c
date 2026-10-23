@@ -225,8 +225,11 @@ static DepthTex *depth_texture(uint32_t data, uint32_t w, uint32_t h, int create
     return NULL;
 }
 
-/* z_kind: 0 no depth buffer, 1 the main one, 2 the depth texture at z_data */
-void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h) {
+/* z_kind: 0 no depth buffer, 1 the main one, 2 the depth texture at z_data;
+   colour targets other than the back buffer are not sampled afterwards here */
+void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, uint32_t color_data, int z_kind, uint32_t z_data, uint32_t z_w,
+                         uint32_t z_h) {
+    (void)color_data;
     if (!g_dev) return;
     if (!g_bb_color) { IDirect3DDevice9_GetRenderTarget(g_dev, 0, &g_bb_color); IDirect3DDevice9_GetDepthStencilSurface(g_dev, &g_bb_depth); }
     if (back_buffer) IDirect3DDevice9_SetRenderTarget(g_dev, 0, g_bb_color);
@@ -1068,6 +1071,12 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
     uint32_t data = RD32(MEM(g_stream_vb + 4));
     if (!data) return;
     data += base_vertex * stride; /* SetIndices' BaseVertexIndex offsets every index */
+    r_draw_indexed_up(prim, n, index_data, data, stride);
+}
+
+void r_draw_indexed_up(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t data, uint32_t stride) {
+    if (!g_dev || (!g_fvf && !g_vsh) || !index_data || !data || !n) return;
+    if (!stride) stride = rc_fvf_stride(g_fvf);
     const uint16_t *idx = (const uint16_t *)MEM(index_data);
     if (g_vsh) { draw_vs(prim, n, MEM(data), stride, idx); return; }
     uint32_t maxv = 0;

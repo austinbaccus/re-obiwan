@@ -223,6 +223,41 @@ static DepthTex *depth_texture(uint32_t data, uint32_t w, uint32_t h, int create
     return NULL;
 }
 
+/* Colour textures the game draws into (the water simulation's height and
+   normal maps): a host texture per guest texture memory, at the game's size,
+   sampled in place of that memory until the CPU writes it or the texture is
+   freed. Surfaces from GetSurfaceLevel share their texture's memory. */
+typedef struct { uint32_t data, w, h; ID3D11Texture2D *tex; ID3D11RenderTargetView *rtv; ID3D11ShaderResourceView *srv; } ColorTex;
+#define COLOR_TEXTURES 32
+static ColorTex g_colortex[COLOR_TEXTURES];
+static ID3D11Resource *g_rtv_res; /* what g_rtv draws into, so it is not also sampled */
+static uint32_t g_rt_w, g_rt_h;   /* the current target's size */
+
+static void color_texture_drop(ColorTex *c) { REL(c->srv); REL(c->rtv); REL(c->tex); memset(c, 0, sizeof *c); }
+
+static ColorTex *color_texture(uint32_t data, uint32_t w, uint32_t h, int create) {
+    ColorTex *c = NULL;
+    for (int i = 0; i < COLOR_TEXTURES && !c; i++) if (g_colortex[i].data == data && g_colortex[i].tex) c = &g_colortex[i];
+    if (!create || !data) return c;
+    if (c && (c->w != w || c->h != h)) color_texture_drop(c);
+    else if (c) return c;
+    for (int i = 0; i < COLOR_TEXTURES && !c; i++) if (!g_colortex[i].tex) c = &g_colortex[i];
+    if (!c) {
+        static int warned;
+        if (!warned++) fprintf(stderr, "render: more than %d colour textures drawn into; the rest are not kept\n", COLOR_TEXTURES);
+        return NULL;
+    }
+    c->tex = texture_2d(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, D3D11_USAGE_DEFAULT, 0);
+    if (!c->tex || FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)c->tex, NULL, &c->rtv)) ||
+        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)c->tex, NULL, &c->srv))) {
+        fprintf(stderr, "render: cannot create a %ux%u colour texture\n", w, h);
+        color_texture_drop(c);
+        return NULL;
+    }
+    c->data = data; c->w = w; c->h = h;
+    return c;
+}
+
 /* Direct3D 9 resets the viewport to the whole new target */
 static void full_viewport(uint32_t w, uint32_t h) {
     float vp[6] = {0, 0, (float)w, (float)h, 0, 1};
@@ -230,13 +265,16 @@ static void full_viewport(uint32_t w, uint32_t h) {
 }
 
 /* z_kind: 0 no depth buffer, 1 the main one, 2 the depth texture at z_data */
-void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h) {
+void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, uint32_t color_data, int z_kind, uint32_t z_data, uint32_t z_w,
+                         uint32_t z_h) {
     if (!g_dev) return;
     DepthTex *d = z_kind == 2 ? depth_texture(z_data, z_w, z_h, 1) : NULL;
     /* Direct3D 11 wants colour and depth views of one size; the colour
        surface of a shadow pass is a throwaway, so it takes the depth's */
     if (d && !back_buffer && (w != d->w || h != d->h)) { w = d->w; h = d->h; }
-    if (back_buffer) { g_rtv = g_bb_rtv; w = g_width; h = g_height; }
+    ColorTex *c = !back_buffer && !d ? color_texture(color_data, w, h, 1) : NULL;
+    if (back_buffer) { g_rtv = g_bb_rtv; g_rtv_res = (ID3D11Resource *)g_bb; w = g_width; h = g_height; }
+    else if (c) { g_rtv = c->rtv; g_rtv_res = (ID3D11Resource *)c->tex; }
     else {
         if (!g_off_rtv || g_off_w != w || g_off_h != h) {
             REL(g_off_rtv); REL(g_off);
@@ -248,8 +286,9 @@ void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, ui
             }
             g_off_w = w; g_off_h = h;
         }
-        g_rtv = g_off_rtv;
+        g_rtv = g_off_rtv; g_rtv_res = (ID3D11Resource *)g_off;
     }
+    g_rt_w = w; g_rt_h = h;
     g_dsv = NULL; g_dsv_res = NULL;
     if (z_kind == 1) {
         if (back_buffer || (w == g_out_w && h == g_out_h)) { g_dsv = g_bb_dsv; g_dsv_res = (ID3D11Resource *)g_bb_z; }
@@ -277,7 +316,7 @@ typedef struct {
     ID3D11Texture2D *tex;
     ID3D11ShaderResourceView *srv;
     uint32_t w, h, fmt;
-    int dirty, linear, compressed;
+    int dirty, linear, compressed, cube;
 } TexSlot;
 static TexSlot g_tex[TEX_SLOTS];
 static ID3D11ShaderResourceView *g_black; /* unbound stages: shaders read (0, 0, 0, 1) as on Direct3D 9 */
@@ -299,16 +338,24 @@ static TexSlot *tex_find(uint32_t guest, int create) {
 void r_texture_dirty(uint32_t guest) {
     TexSlot *t = tex_find(guest, 0);
     if (t) t->dirty = 1;
+    ColorTex *c = color_texture(RD32(MEM(guest + 4)), 0, 0, 0); /* the CPU writes what was drawn */
+    if (c) color_texture_drop(c);
 }
 
 void r_resource_freed(uint32_t guest) {
     TexSlot *t = tex_find(guest, 0);
     if (t) { REL(t->srv); REL(t->tex); memset(t, 0, sizeof *t); }
+    if (((RD32(MEM(guest)) >> 16) & 7) == 4) { /* a texture, not a surface sharing its memory */
+        ColorTex *c = color_texture(RD32(MEM(guest + 4)), 0, 0, 0);
+        if (c) color_texture_drop(c);
+    }
     for (int s = 0; s < 4; s++) if (g_st.bound[s] == guest) g_st.bound[s] = 0;
 }
 
 /* DXT stays compressed (BC1..3) where Direct3D 11 takes it: sizes in whole
-   blocks; anything else becomes B8G8R8A8 */
+   blocks; anything else becomes B8G8R8A8. A cube texture (format bit 2) is
+   six faces, +X -X +Y -Y +Z -Z, each a whole mip chain padded to 128 bytes;
+   only level 0 of each is uploaded. */
 static void upload_now(TexSlot *t);
 static void upload(TexSlot *t) {
     int64_t t0 = qpc();
@@ -319,25 +366,36 @@ static void upload_now(TexSlot *t) {
     RcTex g;
     if (!rc_texture(t->guest, &g)) return;
     int compressed = g.dxt && g.w % 4 == 0 && g.h % 4 == 0;
+    uint32_t format = RD32(MEM(t->guest + 0xC)), levels = (format >> 16) & 0xf;
+    int cube = (format & 4) != 0 && g.w == g.h;
+    uint32_t face_bytes = cube ? (d3d_level_offset(t->guest, levels ? levels : 1) + 127) & ~127u : 0;
     DXGI_FORMAT fmt = !compressed ? DXGI_FORMAT_B8G8R8A8_UNORM : g.fmt == 0x0C ? DXGI_FORMAT_BC1_UNORM : g.fmt == 0x0E ? DXGI_FORMAT_BC2_UNORM : DXGI_FORMAT_BC3_UNORM;
-    if (t->tex && (t->w != g.w || t->h != g.h || t->fmt != g.fmt)) { REL(t->srv); REL(t->tex); }
+    if (t->tex && (t->w != g.w || t->h != g.h || t->fmt != g.fmt || t->cube != cube)) { REL(t->srv); REL(t->tex); }
     if (!t->tex) {
-        t->tex = texture_2d(g.w, g.h, fmt, D3D11_BIND_SHADER_RESOURCE, D3D11_USAGE_DEFAULT, 0);
-        if (!t->tex || FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)t->tex, NULL, &t->srv))) {
-            fprintf(stderr, "render: cannot create %ux%u texture (xbox format %02x)\n", g.w, g.h, g.fmt);
+        D3D11_TEXTURE2D_DESC d = {g.w, g.h, 1, cube ? 6 : 1, fmt, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0,
+                                  cube ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0};
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv = {fmt, D3D11_SRV_DIMENSION_TEXTURECUBE};
+        sv.TextureCube.MipLevels = 1;
+        if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &d, NULL, &t->tex)) ||
+            FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)t->tex, cube ? &sv : NULL, &t->srv))) {
+            fprintf(stderr, "render: cannot create %ux%u %stexture (xbox format %02x)\n", g.w, g.h, cube ? "cube " : "", g.fmt);
             REL(t->tex); t->dirty = 0;
             return;
         }
-        t->w = g.w; t->h = g.h; t->fmt = g.fmt;
+        t->w = g.w; t->h = g.h; t->fmt = g.fmt; t->cube = cube;
     }
     t->linear = g.linear;
     t->compressed = compressed;
-    if (compressed) ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)t->tex, 0, NULL, g.src, g.pitch, 0);
-    else {
-        uint32_t *argb = malloc((size_t)g.w * g.h * 4);
-        rc_texture_argb(&g, argb);
-        ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)t->tex, 0, NULL, argb, g.w * 4, 0);
-        free(argb);
+    for (UINT face = 0; face < (cube ? 6u : 1u); face++) {
+        RcTex f = g;
+        f.src = g.src + face * face_bytes;
+        if (compressed) ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)t->tex, face, NULL, f.src, f.pitch, 0);
+        else {
+            uint32_t *argb = malloc((size_t)f.w * f.h * 4);
+            rc_texture_argb(&f, argb);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)t->tex, face, NULL, argb, f.w * 4, 0);
+            free(argb);
+        }
     }
     rc_dump_texture(&g);
     t->dirty = 0;
@@ -368,11 +426,19 @@ static void resolve_textures(Bound *b) {
             b->scale[s][0] = 1.0f / d->w; b->scale[s][1] = 1.0f / d->h; b->scale[s][2] = rc_depth_unit_scale(g);
             continue;
         }
+        ColorTex *c = color_texture(RD32(MEM(g + 4)), 0, 0, 0);
+        if (c) { /* a colour texture we drew into */
+            if ((ID3D11Resource *)c->tex == g_rtv_res) continue; /* being drawn into */
+            b->srv[s] = c->srv; b->kind[s] = TK_2D;
+            RcTex rt;
+            if (rc_texture(g, &rt) && rt.linear) { b->scale[s][0] = 1.0f / c->w; b->scale[s][1] = 1.0f / c->h; }
+            continue;
+        }
         TexSlot *t = tex_find(g, 1);
         if (!t) continue;
         if (t->dirty) upload(t);
         if (!t->srv) continue;
-        b->srv[s] = t->srv; b->kind[s] = TK_2D;
+        b->srv[s] = t->srv; b->kind[s] = t->cube ? TK_CUBE : TK_2D;
         if (t->linear) { b->scale[s][0] = 1.0f / t->w; b->scale[s][1] = 1.0f / t->h; }
     }
 }
@@ -1066,6 +1132,7 @@ static FfPs *ff_ps(const PsKey *k) {
     put(&t, "%s%s%s", k->flat ? FLAT : "", PS_CONSTANTS, VARYINGS);
     for (int s = 0; s < 4 && k->st[s].cop; s++) {
         if (k->st[s].kind == TK_DEPTH) put(&t, "Texture2D<float> tex%d : register(t%d); SamplerComparisonState smp%d : register(s%d);\n", s, s, s, s);
+        else if (k->st[s].kind == TK_CUBE) put(&t, "TextureCube tex%d : register(t%d); SamplerState smp%d : register(s%d);\n", s, s, s, s);
         else if (k->st[s].kind) put(&t, "Texture2D tex%d : register(t%d); SamplerState smp%d : register(s%d);\n", s, s, s, s);
     }
     put(&t, "float4 main(VARYINGS i) : SV_Target {\n"
@@ -1080,6 +1147,7 @@ static FfPs *ff_ps(const PsKey *k) {
         static const char *const divisor[5] = {"1", "1", "q.y", "q.z", "q.w"};
         const char *div = divisor[S->proj <= 4 ? S->proj : 0];
         if (S->kind == TK_DEPTH) put(&t, "  tx = tex%d.SampleCmpLevelZero(smp%d, q.xy / %s, q.z / %s).xxxx;\n", s, s, div, div);
+        else if (S->kind == TK_CUBE) put(&t, "  tx = tex%d.Sample(smp%d, q.xyz);\n", s, s);
         else if (S->kind) put(&t, "  tx = tex%d.Sample(smp%d, q.xy / %s);\n", s, s, div);
         else put(&t, "  tx = 1;\n");
         put(&t, "  tx.rgb *= lum; lum = 1;\n");
@@ -1562,12 +1630,19 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
     draw(prim, n, MEM(data), stride, (const uint16_t *)MEM(index_data));
 }
 
+void r_draw_indexed_up(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t data, uint32_t stride) {
+    if (!g_dev || (!g_st.fvf && !g_vsh) || !index_data || !data || !n) return;
+    if (!stride) stride = rc_fvf_stride(g_st.fvf);
+    statelog(prim, n, MEM(data), stride);
+    draw(prim, n, MEM(data), stride, (const uint16_t *)MEM(index_data));
+}
+
 /* ---- frame ------------------------------------------------------------------ */
 /* Clear covers the viewport, as Direct3D 9's does */
 void r_clear(uint32_t flags, uint32_t color, float z, uint32_t stencil) {
     if (!g_dev) return;
     const float *vp = g_st.vp;
-    uint32_t w = g_rtv == g_bb_rtv ? g_width : g_off_w, h = g_rtv == g_bb_rtv ? g_height : g_off_h;
+    uint32_t w = g_rt_w, h = g_rt_h;
     if (vp[0] != 0 || vp[1] != 0 || (uint32_t)vp[2] < w || (uint32_t)vp[3] < h) {
         static int warned;
         if (!warned++) fprintf(stderr, "render: clear of a %gx%g viewport clears the whole %ux%u target\n", vp[2], vp[3], w, h);
@@ -1808,6 +1883,7 @@ int r_init(uint32_t width, uint32_t height) {
 
     default_state();
     g_rtv = g_bb_rtv; g_dsv = g_bb_dsv; g_dsv_res = (ID3D11Resource *)g_bb_z;
+    g_rtv_res = (ID3D11Resource *)g_bb; g_rt_w = g_width; g_rt_h = g_height;
     ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_rtv, g_dsv);
     fprintf(stderr, "render: Direct3D 11 device (feature level %u.%u, %ls), %ux%u rendered at %ux%u in a %ux%u %s%s\n", got >> 12,
             (got >> 8) & 0xf, ad.Description, width, height, g_out_w, g_out_h, g_win_w, g_win_h, fullscreen ? "borderless window" : "window",

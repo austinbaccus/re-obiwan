@@ -11,10 +11,11 @@ int  r_ready(void); /* a device exists */
 int  r_has_focus(void); /* the game window is the foreground window */
 float r_wide(void);     /* how many times wider than 4:3 the picture is (RECOMP_RES) */
 void r_present(void);
-/* SetRenderTarget: the back buffer or another colour target of w x h; depth
-   z_kind 0 none, 1 the main depth buffer, 2 the depth texture whose memory is
-   at z_data (z_w x z_h) */
-void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h);
+/* SetRenderTarget: the back buffer or another colour target of w x h whose
+   memory is at color_data; depth z_kind 0 none, 1 the main depth buffer, 2
+   the depth texture whose memory is at z_data (z_w x z_h) */
+void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, uint32_t color_data, int z_kind, uint32_t z_data, uint32_t z_w,
+                         uint32_t z_h);
 void r_clear(uint32_t xbox_flags, uint32_t color, float z, uint32_t stencil);
 
 /* Xbox D3DDevice_SetRenderState_Simple: an NV2A method address and the value
@@ -43,6 +44,8 @@ void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);
 void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
 void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);
 void r_draw_indexed(uint32_t prim, uint32_t vertex_count, uint32_t index_data, uint32_t base_vertex);
+/* DrawIndexedVerticesUP: 16-bit indices and vertices both in guest memory */
+void r_draw_indexed_up(uint32_t prim, uint32_t vertex_count, uint32_t index_data, uint32_t data, uint32_t stride);
 
 /* D3DSBT_ALL state blocks: the whole device state, captured at creation and
    by Capture, restored by Apply. Tokens are never 0. */

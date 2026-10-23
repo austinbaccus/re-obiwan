@@ -37,4 +37,7 @@ int xs_vs_to_hlsl(const char *src, size_t len, int target, char *out, size_t cap
    depth_stages (bit n), which compare r/q with the depth texel; the input
    is the vertex shader's VARYINGS, whose fog is the fog factor (1 for none). */
 int xs_ps_to_hlsl(const char *src, size_t len, int target, uint32_t depth_stages, char *out, size_t cap, int *fog);
+/* the source's version token is ps.* / xps.* (vs.* / xvs.*), after any
+   comments and #define lines */
 int xs_is_pixel_shader(const char *src, size_t len);
+int xs_is_vertex_shader(const char *src, size_t len);

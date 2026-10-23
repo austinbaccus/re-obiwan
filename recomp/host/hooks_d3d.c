@@ -214,7 +214,8 @@ HOOK(D3DDevice_SetRenderTarget) {
         uint32_t w, h, fmt, pitch, zw = 0, zh = 0;
         describe(g_rendertarget, 0, &w, &h, &fmt, &pitch);
         if (z && z != g_depth) describe(z, 0, &zw, &zh, &fmt, &pitch);
-        r_set_render_target(g_rendertarget == g_backbuffer, w, h, !z ? 0 : z == g_depth ? 1 : 2, z ? RD32(MEM(z + O_DATA)) : 0, zw, zh);
+        r_set_render_target(g_rendertarget == g_backbuffer, w, h, RD32(MEM(g_rendertarget + O_DATA)), !z ? 0 : z == g_depth ? 1 : 2,
+                            z ? RD32(MEM(z + O_DATA)) : 0, zw, zh);
     }
     RET(D3DDevice_SetRenderTarget, 0);
 }
@@ -375,8 +376,8 @@ HOOK(D3DDevice_DrawIndexedVertices) {
     RET(D3DDevice_DrawIndexedVertices, 0);
 }
 HOOK(D3DDevice_DrawIndexedVerticesUP) {
-    static int warned;
-    if (!warned++) fprintf(stderr, "d3d: DrawIndexedVerticesUP is not drawn yet\n");
+    /* (PrimitiveType, VertexCount, pIndexData, pVertexStreamZeroData, VertexStreamZeroStride) */
+    if (g_render) r_draw_indexed_up(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3), ARG(ctx, 4));
     RET(D3DDevice_DrawIndexedVerticesUP, 0);
 }
 
@@ -432,10 +433,8 @@ static uint32_t make_xgbuffer(Ctx *ctx, uint32_t size) {
 HOOK(XGAssembleShader) {
     const char *text = ARG(ctx, 1) ? (const char *)MEM(ARG(ctx, 1)) : "";
     size_t text_len = ARG(ctx, 2);
-    const char *head = text;
-    while (head < text + text_len && (*head == ' ' || *head == '\t' || *head == '\r' || *head == '\n')) head++;
     int ps = xs_is_pixel_shader(text, text_len);
-    if (ARG(ctx, 5) && (ps || !strncmp(head, "vs.", 3) || !strncmp(head, "xvs.", 4)) && g_nvs_sources < 64) {
+    if (ARG(ctx, 5) && (ps || xs_is_vertex_shader(text, text_len)) && g_nvs_sources < 64) {
         int id = g_nvs_sources++;
         g_vs_sources[id].src = malloc(text_len);
         memcpy(g_vs_sources[id].src, text, text_len);
