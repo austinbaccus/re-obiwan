@@ -269,6 +269,7 @@ static int run(int argc, char **argv) {
     /* The XBE entry point runs on the initial thread with no SystemRoutine:
        it creates the real main thread and returns. */
     native_init();
+    widescreen_init();
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
     /* the window belongs to this thread: pump its messages while the game runs */

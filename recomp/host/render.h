@@ -9,6 +9,7 @@
 int  r_init(uint32_t width, uint32_t height);
 int  r_ready(void); /* a device exists */
 int  r_has_focus(void); /* the game window is the foreground window */
+float r_wide(void);     /* how many times wider than 4:3 the picture is (RECOMP_RES) */
 void r_present(void);
 /* SetRenderTarget: the back buffer or another colour target of w x h; depth
    z_kind 0 none, 1 the main depth buffer, 2 the depth texture whose memory is

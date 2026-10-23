@@ -138,6 +138,12 @@ next to the executable. Environment switches for unattended runs:
   buffer and back-buffer viewports are scaled, so 3D, text and the HUD are
   all drawn at the higher resolution. Off-screen targets (shadow buffers)
   keep their sizes. Screenshots are saved at the rendered size.
+  A size wider than 4:3 (`5120x1440`) is widescreen: the cameras keep their
+  vertical field of view and see further to the sides (`widescreen.c`
+  widens the angle every camera sets, so culling follows), and the 2D
+  layer (HUD, text, menus) stays 4:3 in the middle, clipped to it.
+  Untextured draws over the whole screen (fades, flashes, cinema bars)
+  still cover the full width.
 - `RECOMP_FULLSCREEN=1`: a borderless window covering the primary monitor,
   with the picture centred pixel for pixel and black around it (Alt+F4
   quits).

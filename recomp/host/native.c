@@ -138,6 +138,27 @@ static LONG CALLBACK native_veh(EXCEPTION_POINTERS *e) {
     ExitProcess(23);
 }
 
+/* make every call of the recompiled function jump to `to` instead */
+static void patch_entry(GuestFn fn, const void *to) {
+    uint8_t *entry = (uint8_t *)fn;
+    DWORD old;
+    VirtualProtect(entry, 5, PAGE_EXECUTE_READWRITE, &old);
+    int32_t rel = (int32_t)((const uint8_t *)to - (entry + 5));
+    entry[0] = 0xe9; memcpy(entry + 1, &rel, 4);
+    VirtualProtect(entry, 5, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), entry, 5);
+}
+
+/* Replace a recompiled guest function by a host one with the same
+   signature (it does the guest's stack and register work itself, like a
+   hook), for changes of behaviour such as the widescreen field of view. */
+int host_override(uint32_t addr, GuestFn replacement) {
+    GuestFn fn = rt_lookup(addr);
+    if (!fn) { fprintf(stderr, "override: no recompiled function at %08x\n", addr); return 0; }
+    patch_entry(fn, (const void *)replacement);
+    return 1;
+}
+
 void native_init(void) {
     const char *list = getenv("RECOMP_NATIVE");
     if (!list) return;
@@ -156,13 +177,7 @@ void native_init(void) {
             int32_t rel = (int32_t)((uint8_t *)native_call - (t + 14));
             t[9] = 0xe8; memcpy(t + 10, &rel, 4);
             t[14] = 0x83; t[15] = 0xc4; t[16] = 0x08; t[17] = 0xc3;
-            uint8_t *entry = (uint8_t *)fn;
-            DWORD old;
-            VirtualProtect(entry, 5, PAGE_EXECUTE_READWRITE, &old);
-            rel = (int32_t)(t - (entry + 5));
-            entry[0] = 0xe9; memcpy(entry + 1, &rel, 4);
-            VirtualProtect(entry, 5, old, &old);
-            FlushInstructionCache(GetCurrentProcess(), entry, 5);
+            patch_entry(fn, t);
             fprintf(stderr, "native: %08x runs as the original x86 code\n", addr);
         }
         while (*p == ',' || *p == ' ') p++;

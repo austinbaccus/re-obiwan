@@ -58,6 +58,7 @@ static void pump(void) {
 
 int r_ready(void) { return g_dev != NULL; }
 int r_has_focus(void) { return g_hwnd && GetForegroundWindow() == g_hwnd; }
+float r_wide(void) { return 1; } /* 640x480 only */
 
 int r_init(uint32_t width, uint32_t height) {
     if (g_dev) return 1;

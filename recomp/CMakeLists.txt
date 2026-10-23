@@ -47,7 +47,7 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     target_compile_options(xs_check PRIVATE /wd4996)
 
     # The game itself: host kernel + hooks + recompiled code, entered the same way.
-    add_library(obiwan_core SHARED host/boot.c host/native.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c ${RENDER_SOURCES} host/hooks_dsound.c host/audio.c runtime/xbe_image.c)
+    add_library(obiwan_core SHARED host/boot.c host/native.c host/widescreen.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c ${RENDER_SOURCES} host/hooks_dsound.c host/audio.c runtime/xbe_image.c)
     target_include_directories(obiwan_core PRIVATE host)
     target_link_libraries(obiwan_core PRIVATE guest shell32 user32 dbghelp ${RENDER_LIBS})
     target_compile_options(obiwan_core PRIVATE /wd4996)

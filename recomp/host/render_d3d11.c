@@ -155,6 +155,8 @@ static void debug_messages(void) {
 
 int r_ready(void) { return g_dev != NULL; }
 int r_has_focus(void) { return g_hwnd && GetForegroundWindow() == g_hwnd; }
+float r_wide(void) { return g_sx / g_sy; }
+static float g_squeeze; /* 2D squeeze for the next draw, see squeeze_2d */
 
 /* ---- render targets ---------------------------------------------------------- */
 /* The game renders shadow buffers: a throwaway colour surface (a header over
@@ -572,6 +574,7 @@ static void apply_states(const Bound *b) {
     int scaled = g_rtv == g_bb_rtv;
     nr.SlopeScaledDepthBias = s->polyfill ? s->polyslope * (scaled ? max(g_sx, g_sy) : 1) : 0;
     nr.DepthClipEnable = TRUE;
+    nr.ScissorEnable = g_squeeze != 0;
     if (!rs || memcmp(&nr, &rd, sizeof nr)) {
         REL(rs);
         rd = nr;
@@ -583,6 +586,11 @@ static void apply_states(const Bound *b) {
     float kx = scaled ? g_sx : 1, ky = scaled ? g_sy : 1;
     D3D11_VIEWPORT vp = {s->vp[0] * kx, s->vp[1] * ky, s->vp[2] * kx, s->vp[3] * ky, s->vp[4], s->vp[5]};
     ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
+    if (g_squeeze) { /* squeezed 2D stays inside the 4:3 middle, as off the edges of the console's screen */
+        float cx = vp.TopLeftX + vp.Width / 2, hw = vp.Width * g_squeeze / 2;
+        D3D11_RECT r = {(LONG)(cx - hw + 0.5f), (LONG)vp.TopLeftY, (LONG)(cx + hw + 0.5f), (LONG)(vp.TopLeftY + vp.Height)};
+        ID3D11DeviceContext_RSSetScissorRects(g_ctx, 1, &r);
+    }
 
     for (int i = 0; i < 4; i++) {
         const Stage *ts = &s->ts[i];
@@ -913,11 +921,13 @@ static FfVs *ff_vs(const VsKey *k) {
         put(&t, "  float w = v.pos.w != 0 ? 1 / v.pos.w : 1;\n"
                 "  float3 ndc = float3((v.pos.x + 0.5 - vp.x) / vp.z * 2 - 1, 1 - (v.pos.y + 0.5 - vp.y) / vp.w * 2,\n"
                 "                      vpz.y != vpz.x ? (v.pos.z - vpz.x) / (vpz.y - vpz.x) : v.pos.z);\n"
+                "  if (hostpos.w != 0) ndc.x *= hostpos.w;\n"
                 "  o.pos = float4(ndc * w, w);\n");
         /* no vertex fog for pretransformed vertices: the specular alpha is the factor */
         put(&t, "  o.fog = %s;\n", spe ? "spe.a" : "1");
     } else {
-        put(&t, "  float4 p = float4(v.pos, 1);\n  o.pos = mul(p, wvp); o.pos.xy += hostpos.xy * o.pos.w;\n  eye = mul(p, wv);\n");
+        put(&t, "  float4 p = float4(v.pos, 1);\n  o.pos = mul(p, wvp); if (hostpos.w != 0) o.pos.x *= hostpos.w;\n"
+                "  o.pos.xy += hostpos.xy * o.pos.w;\n  eye = mul(p, wv);\n");
         if (nrm) put(&t, "  n = mul(v.nrm, (float3x3)nrm);\n");
         put(&t, "  float d = hostpos.z != 0 ? length(eye.xyz) : abs(eye.z), f = 1;\n"
                 "  if (fog.w == 3) f = (fog.y - d) / (fog.y - fog.x);\n"
@@ -1133,7 +1143,7 @@ static int apply_shaders(const Bound *b) {
     float fog[4], fogcolor[4];
     fog_state(fog, fogcolor);
     /* Direct3D 9 pixel centres: half a pixel right and down, in clip units */
-    float hostpos[4] = {1.0f / s->vp[2], -1.0f / s->vp[3], (float)s->fogrange, 0};
+    float hostpos[4] = {1.0f / s->vp[2], -1.0f / s->vp[3], (float)s->fogrange, g_squeeze};
 
     if (g_vsh) {
         static CbVs cb;
@@ -1290,6 +1300,39 @@ static void probe(void) {
    expanded to float4s, FVF vertices as they are), and indices rebased to
    first; quads, fans and polygons become triangle lists and a line loop is
    closed */
+/* With a picture wider than 4:3 the game's 3D sees further to the sides
+   (widescreen.c), but its 2D layer is laid out for 4:3. 2D draws to the
+   back buffer (pretransformed vertices, or vertices in pixels through a
+   projection without perspective, as the HUD and text are) are squeezed into
+   the middle and clipped to it. Untextured draws over the whole viewport
+   (fades, flashes, cinema bars) keep covering all of it; textured ones are
+   squeezed too, since screens are built from several pictures that must
+   stay aligned. The factor for the next draw, 0 when nothing is squeezed. */
+static float squeeze_2d(const uint8_t *verts, uint32_t stride, uint32_t first, uint32_t count) {
+    const St *s = &g_st;
+    float wide = g_sx / g_sy;
+    if (wide < 1.001f || g_vsh || g_rtv != g_bb_rtv) return 0;
+    int rhw = (s->fvf & 0xE) == 0x4;
+    float m[16], wv[16];
+    if (!rhw) {
+        mat_mul(s->world, s->view, wv);
+        mat_mul(wv, s->proj, m);
+        if (fabsf(m[3]) > 1e-6f || fabsf(m[7]) > 1e-6f || fabsf(m[11]) > 1e-6f || fabsf(m[15] - 1) > 1e-6f) return 0; /* perspective: 3D */
+    }
+    float lo = 1e30f, hi = -1e30f;
+    for (uint32_t i = first; i < first + count; i++) {
+        float p[3];
+        memcpy(p, verts + (size_t)i * stride, 12);
+        /* in clip units for transformed vertices, in pixels for pretransformed ones */
+        float x = rhw ? p[0] : p[0] * m[0] + p[1] * m[4] + p[2] * m[8] + m[12];
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+    }
+    int full = rhw ? lo <= s->vp[0] + 1 && hi >= s->vp[0] + s->vp[2] - 1 : lo <= -0.99f && hi >= 0.99f;
+    int textured = s->bound[0] && s->ts[0].colorop != D3DTOP_DISABLE;
+    return full && !textured ? 0 : 1 / wide;
+}
+
 static void draw(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
     if (!g_dev || !n || !stride) return;
     if (g_vsh ? !vshader_ready(g_vsh) : !g_st.fvf || !(g_st.fvf & 0xE)) return;
@@ -1365,6 +1408,7 @@ static void draw(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t strid
     }
     ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, topo);
 
+    g_squeeze = squeeze_2d(verts, stride, first, count);
     apply_states(&b);
     if (!apply_shaders(&b)) return;
     if (ni) ID3D11DeviceContext_DrawIndexed(g_ctx, ni, 0, 0);

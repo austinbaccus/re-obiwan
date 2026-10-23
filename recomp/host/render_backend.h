@@ -11,7 +11,7 @@
 #define RENDER_API(R, V)                                                                                              \
     R(int, r_init, (uint32_t width, uint32_t height), (width, height))                                                 \
     R(int, r_ready, (void), ())                                                                                        \
-    R(int, r_has_focus, (void), ())                                                                                    \
+    R(int, r_has_focus, (void), ())                                                                                        R(float, r_wide, (void), ())                                                                                       \
     V(r_present, (void), ())                                                                                           \
     V(r_set_render_target, (int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h), \
       (back_buffer, w, h, z_kind, z_data, z_w, z_h))                                                                   \
@@ -51,6 +51,7 @@
 #define r_init RB_CAT(RENDER_BACKEND, r_init)
 #define r_ready RB_CAT(RENDER_BACKEND, r_ready)
 #define r_has_focus RB_CAT(RENDER_BACKEND, r_has_focus)
+#define r_wide RB_CAT(RENDER_BACKEND, r_wide)
 #define r_present RB_CAT(RENDER_BACKEND, r_present)
 #define r_set_render_target RB_CAT(RENDER_BACKEND, r_set_render_target)
 #define r_clear RB_CAT(RENDER_BACKEND, r_clear)
