@@ -3,6 +3,7 @@
    device state into draw calls on a host API (Direct3D 9 for now: it still
    has the fixed-function pipeline the Xbox API maps onto almost one to one). */
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 int  r_init(uint32_t width, uint32_t height);
@@ -22,6 +23,11 @@ void r_set_texture(uint32_t stage, uint32_t guest_object);
 void r_set_transform(uint32_t state, const float *m);
 void r_set_viewport(uint32_t x, uint32_t y, uint32_t w, uint32_t h, float minz, float maxz);
 void r_set_vertex_shader(uint32_t handle);
+/* programmable vertex shaders: the game's source text (translated by
+   shader_xlate.c) and the Xbox vertex declaration tokens, up to 0xFFFFFFFF */
+void r_create_vertex_shader(uint32_t handle, const char *src, size_t len, const uint32_t *decl, int ndecl);
+void r_delete_vertex_shader(uint32_t handle);
+void r_set_vs_constants(int reg, const float *data, uint32_t count); /* c0..c95 */
 void r_set_pixel_shader(uint32_t handle);
 void r_create_pixel_shader(uint32_t handle, const uint32_t *psdef); /* D3DPIXELSHADERDEF, 66 dwords */
 void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);

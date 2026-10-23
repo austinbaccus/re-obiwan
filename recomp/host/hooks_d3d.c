@@ -233,7 +233,14 @@ HOOK(D3DDevice_SetTextureStageStateDeferred) { if (g_render) r_set_tss(ECX(ctx),
 HOOK(D3DDevice_SetTextureState_BorderColor) { if (g_render) r_set_tss(ARG(ctx, 0), 29, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_BorderColor, 0); }
 HOOK(D3DDevice_SetTextureState_TexCoordIndex) { if (g_render) r_set_tss(ARG(ctx, 0), 28, ARG(ctx, 1)); RET(D3DDevice_SetTextureState_TexCoordIndex, 0); }
 HOOK(D3DDevice_SetTexture) { if (g_render) r_set_texture(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetTexture, 0); }
-HOOK(D3DDevice_SetStreamSource) { if (g_render) r_set_stream(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_SetStreamSource, 0); }
+HOOK(D3DDevice_SetStreamSource) {
+    static uint32_t seen[64]; static int nseen;
+    uint32_t key = (ARG(ctx, 0) << 16) | (ARG(ctx, 2) & 0xffff), known = 0;
+    for (int i = 0; i < nseen; i++) known |= seen[i] == key;
+    if (getenv("RECOMP_VSLOG") && !known && nseen < 64) { seen[nseen++] = key; fprintf(stderr, "stream %u stride %u (vb %08x)\n", ARG(ctx, 0), ARG(ctx, 2), ARG(ctx, 1)); }
+    if (g_render) r_set_stream(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2));
+    RET(D3DDevice_SetStreamSource, 0);
+}
 static uint32_t g_indices, g_index_base;
 /* (pIndexBuffer, BaseVertexIndex): like the original (0x36b070), publish the
    index data in D3D's global (0x37aa64), which the game's draw code adds its
@@ -245,10 +252,30 @@ HOOK(D3DDevice_SetIndices) {
     RET(D3DDevice_SetIndices, 0);
 }
 HOOK(D3DDevice_SetVertexShader) { if (g_render) r_set_vertex_shader(ARG(ctx, 0)); RET(D3DDevice_SetVertexShader, 0); }
-HOOK(D3DDevice_SetVertexShaderConstant) { RET(D3DDevice_SetVertexShaderConstant, 0); }
+/* RECOMP_VSLOG: describe vertex shader creation, constants and streams (milestone 4 survey) */
+static int vslog(void) { static int on = -1; if (on < 0) on = getenv("RECOMP_VSLOG") != NULL; return on; }
+HOOK(D3DDevice_SetVertexShaderConstant) {
+    static uint32_t seen[256]; static int nseen;
+    uint32_t key = (ARG(ctx, 0) << 16) | (ARG(ctx, 2) & 0xffff), known = 0;
+    for (int i = 0; i < nseen; i++) known |= seen[i] == key;
+    if (vslog() && !known && nseen < 256) {
+        seen[nseen++] = key;
+        int32_t reg = (int32_t)ARG(ctx, 0);
+        const float *f = (const float *)MEM(ARG(ctx, 1));
+        fprintf(stderr, "vsconst reg %d count %u (frame %u): %g %g %g %g\n", reg, ARG(ctx, 2), g_frames, f[0], f[1], f[2], f[3]);
+    }
+    /* (Register, pConstantData, ConstantCount) */
+    if (g_render && ARG(ctx, 1)) r_set_vs_constants((int32_t)ARG(ctx, 0), (const float *)MEM(ARG(ctx, 1)), ARG(ctx, 2));
+    RET(D3DDevice_SetVertexShaderConstant, 0);
+}
 HOOK(D3DDevice_SetPixelShader) { if (g_render) r_set_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_SetPixelShader, 0); }
 HOOK(D3DDevice_SetPixelShaderConstant) { RET(D3DDevice_SetPixelShaderConstant, 0); }
 static uint32_t g_handles = 0x1000;
+/* vertex shader sources seen by XGAssembleShader; its output buffer holds
+   XVS_MAGIC and the index here instead of microcode */
+#define XVS_MAGIC 0x21535658u /* "XVS!" */
+static struct { char *src; size_t len; } g_vs_sources[64];
+static int g_nvs_sources;
 HOOK(D3DDevice_CreatePixelShader) {
     /* (pPSDef, pHandle): the register-combiner setup, 66 dwords */
     uint32_t def = ARG(ctx, 0), handle = g_handles++;
@@ -262,14 +289,27 @@ HOOK(D3DDevice_DeletePixelShader) { RET(D3DDevice_DeletePixelShader, 0); }
    shader rather than an FVF code), and the renderer falls back to fixed
    function for draws that use one. */
 HOOK(D3DDevice_CreateVertexShader) {
-    uint32_t ph = ARG(ctx, 2);
-    if (ph) WR32(MEM(ph), (g_handles++ << 4) | 1);
+    uint32_t ph = ARG(ctx, 2), decl = ARG(ctx, 0), handle = (g_handles++ << 4) | 1;
+    if (vslog()) {
+        fprintf(stderr, "vs create %08x: function %08x [%08x %08x] usage %x decl", handle, ARG(ctx, 1),
+                ARG(ctx, 1) ? RD32(MEM(ARG(ctx, 1))) : 0, ARG(ctx, 1) ? RD32(MEM(ARG(ctx, 1) + 4)) : 0, ARG(ctx, 3));
+        for (int i = 0; decl && i < 40; i++) { uint32_t t = RD32(MEM(decl + 4 * i)); fprintf(stderr, " %08x", t); if (t == 0xFFFFFFFF) break; }
+        fprintf(stderr, "\n");
+    }
+    if (ph) WR32(MEM(ph), handle);
+    uint32_t fn = ARG(ctx, 1);
+    if (g_render && fn && RD32(MEM(fn)) == XVS_MAGIC && RD32(MEM(fn + 4)) < (uint32_t)g_nvs_sources) {
+        uint32_t tokens[64]; int n = 0;
+        while (decl && n < 64 && (tokens[n] = RD32(MEM(decl + 4 * n))) != 0xFFFFFFFF) n++;
+        const int id = RD32(MEM(fn + 4));
+        r_create_vertex_shader(handle, g_vs_sources[id].src, g_vs_sources[id].len, tokens, n);
+    }
     RET(D3DDevice_CreateVertexShader, 0);
 }
-HOOK(D3DDevice_DeleteVertexShader) { RET(D3DDevice_DeleteVertexShader, 0); }
-HOOK(D3DDevice_LoadVertexShader) { RET(D3DDevice_LoadVertexShader, 0); }
-HOOK(D3DDevice_SelectVertexShader) { RET(D3DDevice_SelectVertexShader, 0); }
-HOOK(D3DDevice_SetShaderConstantMode) { RET(D3DDevice_SetShaderConstantMode, 0); }
+HOOK(D3DDevice_DeleteVertexShader) { if (g_render) r_delete_vertex_shader(ARG(ctx, 0)); RET(D3DDevice_DeleteVertexShader, 0); }
+HOOK(D3DDevice_LoadVertexShader) { if (vslog()) fprintf(stderr, "vs load %08x at %u\n", ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_LoadVertexShader, 0); }
+HOOK(D3DDevice_SelectVertexShader) { if (vslog()) fprintf(stderr, "vs select %08x at %u\n", ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SelectVertexShader, 0); }
+HOOK(D3DDevice_SetShaderConstantMode) { if (vslog()) fprintf(stderr, "vs constant mode %u\n", ARG(ctx, 0)); RET(D3DDevice_SetShaderConstantMode, 0); }
 /* (Type, pToken): the game only asks for D3DSBT_ALL (CFlashOverlay saves the
    state around its drawing) */
 HOOK(D3DDevice_CreateStateBlock) {
@@ -340,12 +380,34 @@ static uint32_t make_xgbuffer(Ctx *ctx, uint32_t size) {
 
 /* XGAssembleShader(pSrcName, pSrcData, SrcDataLen, Flags, ppConstants,
    ppCompiledShader, ppErrorLog, ppShaderType, ...): the game assembles its
-   pixel shaders from source at startup. Nothing is drawn yet, so hand back
-   an empty D3DPIXELSHADERDEF-sized buffer and no constants or errors. */
+   shaders from source at startup. The host translates vertex shader source
+   itself (shader_xlate.c), so the "compiled" vertex shader is a tag that
+   CreateVertexShader turns back into the source: XVS_MAGIC and an index.
+   Pixel shaders get an empty D3DPIXELSHADERDEF-sized buffer for now. */
 HOOK(XGAssembleShader) {
+    const char *text = ARG(ctx, 1) ? (const char *)MEM(ARG(ctx, 1)) : "";
+    size_t text_len = ARG(ctx, 2);
+    const char *head = text;
+    while (head < text + text_len && (*head == ' ' || *head == '\t' || *head == '\r' || *head == '\n')) head++;
+    if (ARG(ctx, 5) && (!strncmp(head, "vs.", 3) || !strncmp(head, "xvs.", 4)) && g_nvs_sources < 64) {
+        int id = g_nvs_sources++;
+        g_vs_sources[id].src = malloc(text_len);
+        memcpy(g_vs_sources[id].src, text, text_len);
+        g_vs_sources[id].len = text_len;
+        uint32_t buf = make_xgbuffer(ctx, 16), data = buf ? RD32(MEM(buf + 4)) : 0;
+        if (data) { WR32(MEM(data), XVS_MAGIC); WR32(MEM(data + 4), (uint32_t)id); }
+        WR32(MEM(ARG(ctx, 5)), buf);
+        if (ARG(ctx, 4)) WR32(MEM(ARG(ctx, 4)), 0);
+        if (ARG(ctx, 6)) WR32(MEM(ARG(ctx, 6)), 0);
+        if (ARG(ctx, 7)) WR32(MEM(ARG(ctx, 7)), 0);
+        RET(XGAssembleShader, 0);
+    }
     const char *name = ARG(ctx, 0) ? (const char *)MEM(ARG(ctx, 0)) : "?";
     uint32_t pp_const = ARG(ctx, 4), pp_shader = ARG(ctx, 5), pp_err = ARG(ctx, 6), pp_type = ARG(ctx, 7);
     trace("XGAssembleShader %s (%u bytes of source, flags %08x)", name, ARG(ctx, 2), ARG(ctx, 3));
+    if (getenv("RECOMP_VSLOG"))
+        fprintf(stderr, "xgasm %s: source %08x (%u bytes) flags %x out %08x/%08x/%08x\n", name, ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3),
+                ARG(ctx, 4), ARG(ctx, 5), ARG(ctx, 6));
     if (pp_const) WR32(MEM(pp_const), 0);
     if (pp_shader) WR32(MEM(pp_shader), make_xgbuffer(ctx, 0xA4));
     if (pp_err) WR32(MEM(pp_err), 0);

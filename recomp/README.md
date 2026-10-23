@@ -105,6 +105,8 @@ next to the executable. Environment switches for unattended runs:
 - `RECOMP_STATELOG=frame`: print the device state (blending, stage
   operations, where the first vertex lands on screen) behind every draw of
   that frame.
+- `RECOMP_VSLOG=1`: log shader assembly, vertex declarations, the vertex
+  shader constants set (each register/count once) and stream strides.
 - `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
   indirect (or all) guest calls. About 100× slower.
 

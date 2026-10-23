@@ -10,14 +10,15 @@
    Resources stay in guest memory; textures are uploaded (unswizzled and
    converted to A8R8G8B8, or passed through for DXT) when they are first used
    after being written. Vertex data is drawn straight from guest memory with
-   DrawPrimitiveUP. Programmable shaders are not translated yet: vertex
-   shader handles fall back to the fixed function pipeline and pixel shaders
-   to "texture modulate diffuse". */
+   DrawPrimitiveUP. Vertex shaders are the game's source translated to HLSL
+   (shader_xlate.c) with their vertices expanded per draw; pixel shaders are
+   not translated yet, so their draws use the texture stage states. */
 #define WIN32_LEAN_AND_MEAN
 #define CINTERFACE
 #define COBJMACROS
 #include <windows.h>
 #include <d3d9.h>
+#include <d3dcommon.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,7 @@
 #include "guest.h"
 #include "kernel.h"
 #include "render.h"
+#include "shader_xlate.h"
 
 #pragma comment(lib, "d3d9.lib")
 
@@ -529,15 +531,209 @@ static uint32_t fvf_stride(uint32_t fvf) {
     return n;
 }
 
+/* ---- programmable vertex shaders --------------------------------------------- */
+/* The game's shader source becomes HLSL (shader_xlate.c), compiled for vs_2_0
+   on first use. The Xbox vertex declaration describes stream 0 in packed
+   formats Direct3D 9 lacks (3-byte, 11:11:10) at unaligned offsets, so each
+   draw expands the vertices it touches to one float4 per shader input, read
+   through TEXCOORDn. */
+typedef HRESULT(WINAPI *D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const void *, void *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
+typedef struct { uint8_t reg, type; uint16_t offset; } VElem;
+typedef struct {
+    uint32_t handle;
+    char *src; size_t len;
+    VElem elems[16]; int nelems;
+    IDirect3DVertexShader9 *vs;
+    IDirect3DVertexDeclaration9 *decl;
+    uint8_t regs[16]; int nregs;         /* shader inputs, in host vertex order */
+    int failed;
+} VShader;
+#define VSHADERS 64
+static VShader g_vshaders[VSHADERS];
+static VShader *g_vsh;                   /* the bound shader, NULL for FVF */
+static float g_vsc[96][4];               /* constants c0..c95 */
+
+static uint32_t vsdt_size(uint32_t type) {
+    switch (type) {
+    case 0x12: return 4;  case 0x22: return 8;  case 0x32: return 12; case 0x42: return 16;  /* FLOAT1..4 */
+    case 0x40: return 4;  case 0x16: return 4;  case 0x72: return 12;                         /* D3DCOLOR, NORMPACKED3, FLOAT2H */
+    case 0x11: return 2;  case 0x21: return 4;  case 0x31: return 6;  case 0x41: return 8;   /* NORMSHORT1..4 */
+    case 0x15: return 2;  case 0x25: return 4;  case 0x35: return 6;  case 0x45: return 8;   /* SHORT1..4 */
+    case 0x14: return 1;  case 0x24: return 2;  case 0x34: return 3;  case 0x44: return 4;   /* PBYTE1..4 */
+    case 0x02: return 0;                                                                      /* NONE */
+    default: return 0xffff;
+    }
+}
+
+/* one element of an Xbox vertex as float4, missing components (0, 0, 0, 1) */
+static void vsdt_fetch(uint32_t type, const uint8_t *p, float *o) {
+    o[0] = o[1] = o[2] = 0; o[3] = 1;
+    uint32_t n = (type >> 4) & 0xf;
+    switch (type & 0xf) {
+    case 0x2:
+        if (type == 0x72) { memcpy(o, p, 8); memcpy(o + 3, p + 8, 4); break; }   /* FLOAT2H: x, y, w */
+        memcpy(o, p, 4 * n);
+        break;
+    case 0x0: /* D3DCOLOR: B, G, R, A in memory */
+        o[0] = p[2] / 255.0f; o[1] = p[1] / 255.0f; o[2] = p[0] / 255.0f; o[3] = p[3] / 255.0f;
+        break;
+    case 0x6: { /* NORMPACKED3: signed 11:11:10 */
+        uint32_t v; memcpy(&v, p, 4);
+        int x = (int)(v << 21) >> 21, y = (int)(v << 10) >> 21, z = (int)v >> 22;
+        o[0] = x / 1023.0f; o[1] = y / 1023.0f; o[2] = z / 511.0f;
+        break;
+    }
+    case 0x1: for (uint32_t i = 0; i < n; i++) { int16_t s; memcpy(&s, p + 2 * i, 2); o[i] = s / 32767.0f; } break;
+    case 0x5: for (uint32_t i = 0; i < n; i++) { int16_t s; memcpy(&s, p + 2 * i, 2); o[i] = s; } break;
+    case 0x4: for (uint32_t i = 0; i < n; i++) o[i] = p[i] / 255.0f; break;
+    }
+}
+
+void r_create_vertex_shader(uint32_t handle, const char *src, size_t len, const uint32_t *decl, int ndecl) {
+    VShader *s = NULL;
+    for (int i = 0; i < VSHADERS && !s; i++) if (!g_vshaders[i].handle) s = &g_vshaders[i];
+    if (!s) { fprintf(stderr, "render: out of vertex shader slots\n"); return; }
+    memset(s, 0, sizeof *s);
+    s->handle = handle;
+    s->src = malloc(len);
+    memcpy(s->src, src, len);
+    s->len = len;
+    /* Xbox D3DVSD tokens: STREAM (1 << 29 | n), STREAMDATA (2 << 29 | type << 16 | reg),
+       SKIP (2 << 29 | 0x10000000 | dwords << 16), END 0xFFFFFFFF */
+    uint32_t stream = 0, offset = 0;
+    for (int i = 0; i < ndecl && decl[i] != 0xFFFFFFFF; i++) {
+        uint32_t t = decl[i], kind = t >> 29;
+        if (kind == 1) { stream = t & 0xf; offset = 0; continue; }
+        if (kind != 2) { fprintf(stderr, "render: vertex declaration token %08x not handled\n", t); continue; }
+        if (t & 0x10000000) { offset += ((t >> 16) & 0xf) * 4; continue; }
+        uint32_t type = (t >> 16) & 0xff, size = vsdt_size(type);
+        if (size == 0xffff) { fprintf(stderr, "render: vertex data type %02x not handled\n", type); s->failed = 1; return; }
+        if (stream != 0) { fprintf(stderr, "render: vertex stream %u not handled\n", stream); s->failed = 1; return; }
+        if (s->nelems < 16) s->elems[s->nelems++] = (VElem){(uint8_t)(t & 0x1f), (uint8_t)type, (uint16_t)offset};
+        offset += size;
+    }
+}
+
+void r_delete_vertex_shader(uint32_t handle) {
+    for (int i = 0; i < VSHADERS; i++) {
+        VShader *s = &g_vshaders[i];
+        if (s->handle != handle) continue;
+        if (s->vs) IDirect3DVertexShader9_Release(s->vs);
+        if (s->decl) IDirect3DVertexDeclaration9_Release(s->decl);
+        free(s->src);
+        if (g_vsh == s) g_vsh = NULL;
+        memset(s, 0, sizeof *s);
+    }
+}
+
+void r_set_vs_constants(int reg, const float *data, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++)
+        if (reg + (int)i >= 0 && reg + (int)i < 96) memcpy(g_vsc[reg + i], data + 4 * i, 16);
+}
+
+/* translate and compile on first use */
+static int vshader_ready(VShader *s) {
+    if (s->vs) return 1;
+    if (s->failed || !g_dev) return 0;
+    s->failed = 1;
+    static D3DCompileFn compile;
+    if (!compile) {
+        HMODULE dll = LoadLibraryA("d3dcompiler_47.dll");
+        compile = dll ? (D3DCompileFn)GetProcAddress(dll, "D3DCompile") : NULL;
+        if (!compile) { fprintf(stderr, "render: d3dcompiler_47.dll is missing; vertex shaders are not drawn\n"); return 0; }
+    }
+    static char hlsl[1 << 17];
+    uint32_t inputs = 0;
+    if (xs_vs_to_hlsl(s->src, s->len, hlsl, sizeof hlsl, &inputs)) {
+        fprintf(stderr, "render: vertex shader %08x not translated: %s\n", s->handle, hlsl);
+        return 0;
+    }
+    ID3DBlob *code = NULL, *errors = NULL;
+    HRESULT hr = compile(hlsl, strlen(hlsl), "xvs", NULL, NULL, "main", "vs_2_0", 0, 0, &code, &errors);
+    if (FAILED(hr)) {
+        fprintf(stderr, "render: vertex shader %08x does not compile: %s\n", s->handle, errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "?");
+        if (errors) ID3D10Blob_Release(errors);
+        return 0;
+    }
+    hr = IDirect3DDevice9_CreateVertexShader(g_dev, (const DWORD *)ID3D10Blob_GetBufferPointer(code), &s->vs);
+    ID3D10Blob_Release(code);
+    if (errors) ID3D10Blob_Release(errors);
+    if (FAILED(hr)) { fprintf(stderr, "render: CreateVertexShader failed %08lx\n", hr); return 0; }
+    D3DVERTEXELEMENT9 el[17];
+    s->nregs = 0;
+    for (int r = 0; r < 16; r++) {
+        if (!(inputs & (1u << r))) continue;
+        el[s->nregs] = (D3DVERTEXELEMENT9){0, (WORD)(16 * s->nregs), D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, (BYTE)r};
+        s->regs[s->nregs++] = (uint8_t)r;
+    }
+    el[s->nregs] = (D3DVERTEXELEMENT9)D3DDECL_END();
+    if (FAILED(IDirect3DDevice9_CreateVertexDeclaration(g_dev, el, &s->decl))) { fprintf(stderr, "render: vertex declaration failed\n"); return 0; }
+    s->failed = 0;
+    return 1;
+}
+
+/* draw with the bound vertex shader: expand the guest vertices a draw
+   touches (first..last) into float4 inputs, indices rebased to first */
+static D3DPRIMITIVETYPE prim_pc(uint32_t p, uint32_t n, uint32_t *count);
+static void apply_textures(void);
+static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
+    if (!vshader_ready(g_vsh) || !n) return;
+    uint32_t first = 0, last = n - 1;
+    if (idx) {
+        first = 0xffff; last = 0;
+        for (uint32_t i = 0; i < n; i++) { if (idx[i] < first) first = idx[i]; if (idx[i] > last) last = idx[i]; }
+    }
+    uint32_t count = last - first + 1, vstride = 16 * g_vsh->nregs;
+    static float *buf; static uint32_t cap;
+    if (count * g_vsh->nregs * 4 > cap) { cap = count * g_vsh->nregs * 4; buf = realloc(buf, cap * sizeof *buf); }
+    for (uint32_t v = 0; v < count; v++) {
+        const uint8_t *src = verts + (size_t)(first + v) * stride;
+        for (int k = 0; k < g_vsh->nregs; k++) {
+            float *o = buf + (size_t)v * g_vsh->nregs * 4 + k * 4;
+            o[0] = o[1] = o[2] = 0; o[3] = 1;
+            for (int e = 0; e < g_vsh->nelems; e++)
+                if (g_vsh->elems[e].reg == g_vsh->regs[k]) vsdt_fetch(g_vsh->elems[e].type, src + g_vsh->elems[e].offset, o);
+        }
+    }
+    apply_textures();
+    IDirect3DDevice9_SetVertexDeclaration(g_dev, g_vsh->decl);
+    IDirect3DDevice9_SetVertexShader(g_dev, g_vsh->vs);
+    IDirect3DDevice9_SetVertexShaderConstantF(g_dev, 0, &g_vsc[0][0], 96);
+    static uint16_t *ib; static uint32_t ibcap;
+    uint32_t prims, need = prim == 8 ? n / 4 * 6 : n;
+    if (need > ibcap) { ibcap = need; ib = realloc(ib, ibcap * 2); }
+    if (prim == 8) { /* quads as triangle pairs */
+        for (uint32_t q = 0; q < n / 4; q++) {
+            uint32_t a = idx ? idx[q * 4] : q * 4, b = idx ? idx[q * 4 + 1] : q * 4 + 1, c = idx ? idx[q * 4 + 2] : q * 4 + 2, d = idx ? idx[q * 4 + 3] : q * 4 + 3;
+            uint16_t *t = ib + q * 6;
+            t[0] = (uint16_t)(a - first); t[1] = (uint16_t)(b - first); t[2] = (uint16_t)(c - first);
+            t[3] = (uint16_t)(a - first); t[4] = (uint16_t)(c - first); t[5] = (uint16_t)(d - first);
+        }
+        IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, D3DPT_TRIANGLELIST, 0, count, n / 4 * 2, ib, D3DFMT_INDEX16, buf, vstride);
+    } else {
+        D3DPRIMITIVETYPE t = prim_pc(prim, n, &prims);
+        if (prims && idx) {
+            for (uint32_t i = 0; i < n; i++) ib[i] = (uint16_t)(idx[i] - first);
+            IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, t, 0, count, prims, ib, D3DFMT_INDEX16, buf, vstride);
+        } else if (prims) IDirect3DDevice9_DrawPrimitiveUP(g_dev, t, prims, buf, vstride);
+    }
+}
+
 void r_set_vertex_shader(uint32_t handle) {
     g_vs_handle = handle;
-    if (handle & 1) { /* a vertex shader object, not translated yet */
-        if (!g_warned_vs++) fprintf(stderr, "render: programmable vertex shaders are not translated yet (handle %08x)\n", handle);
+    if (handle & 1) { /* a vertex shader object (CreateVertexShader) */
+        g_vsh = NULL;
+        for (int i = 0; i < VSHADERS; i++) if (g_vshaders[i].handle == handle) g_vsh = &g_vshaders[i];
+        if (!g_vsh && !g_warned_vs++) fprintf(stderr, "render: unknown vertex shader handle %08x\n", handle);
         g_fvf = 0;
         return;
     }
+    g_vsh = NULL;
     g_fvf = handle;
-    if (g_dev) IDirect3DDevice9_SetFVF(g_dev, handle & ~0x1u);
+    if (g_dev) {
+        IDirect3DDevice9_SetVertexShader(g_dev, NULL);
+        IDirect3DDevice9_SetFVF(g_dev, handle & ~0x1u);
+    }
 }
 void r_set_pixel_shader(uint32_t handle) { g_ps_handle = handle; }
 
@@ -602,6 +798,9 @@ void r_apply_state_block(uint32_t token) {
     memcpy(g_stage_ops, b->stage_ops, sizeof g_stage_ops); memcpy(g_texmat, b->texmat, sizeof g_texmat);
     g_fvf = b->fvf; g_vs_handle = b->vs_handle; g_ps_handle = b->ps_handle;
     g_stream_vb = b->stream_vb; g_stream_stride = b->stream_stride;
+    g_vsh = NULL;
+    if (g_vs_handle & 1)
+        for (int i = 0; i < VSHADERS; i++) if (g_vshaders[i].handle == g_vs_handle) g_vsh = &g_vshaders[i];
     g_stage_dirty = 1; /* rebind: a bound texture may have been re-uploaded since */
 }
 void r_delete_state_block(uint32_t token) {
@@ -675,6 +874,7 @@ static void statelog(uint32_t prim, uint32_t n, const void *data, uint32_t strid
 }
 
 static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride) {
+    if (g_dev && g_vsh && n && stride) { draw_vs(prim, n, data, stride, NULL); return; }
     if (!g_dev || !g_fvf || !n || !stride) return;
     drawlog(prim, n, data, stride);
     statelog(prim, n, data, stride);
@@ -710,7 +910,7 @@ void r_draw_up(uint32_t prim, uint32_t n, uint32_t data, uint32_t stride) {
 }
 
 void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t base_vertex) {
-    if (!g_dev || !g_fvf || !g_stream_vb || !n) return;
+    if (!g_dev || (!g_fvf && !g_vsh) || !g_stream_vb || !n) return;
     if (index_data < 0x10000) { /* no index buffer behind it: report once rather than read low memory */
         static int warned;
         if (!warned++) fprintf(stderr, "render: indexed draw with index data %08x skipped\n", index_data);
@@ -721,6 +921,7 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
     if (!data) return;
     data += base_vertex * stride; /* SetIndices' BaseVertexIndex offsets every index */
     const uint16_t *idx = (const uint16_t *)MEM(index_data);
+    if (g_vsh) { draw_vs(prim, n, MEM(data), stride, idx); return; }
     uint32_t maxv = 0;
     for (uint32_t i = 0; i < n; i++) if (idx[i] > maxv) maxv = idx[i];
     apply_textures();
