@@ -17,9 +17,11 @@
    Vertex and index data are copied from guest memory into dynamic buffers
    per draw, as DrawPrimitiveUP did for Direct3D 9; quads and fans become
    triangle lists. The game draws into a back buffer texture of its own that
-   Present copies into a flip-model swap chain. Pixel centres follow
-   Direct3D 9 (half a pixel off Direct3D 11's), as do the rules for
-   pretransformed vertices, so the frames match the reference renderer. */
+   Present copies into a flip-model swap chain. Pixel centres are the
+   Xbox's: its D3D adds 0.53125 to screen coordinates (FUN_003698d0,
+   FUN_0036d2a0), so a pixel samples 1/32 of a pixel left of and above
+   Direct3D 9's centre and never lands exactly on a texel edge at an integer
+   coordinate. Pretransformed vertices follow Direct3D 9's rules. */
 #define WIN32_LEAN_AND_MEAN
 #define CINTERFACE
 #define COBJMACROS
@@ -943,10 +945,10 @@ static FfVs *ff_vs(const VsKey *k) {
     /* D3DCOLOR is B, G, R, A in memory; absent colours are white and black */
     put(&t, "  float4 dif = %s, spe = %s, eye = 0; float3 n = %s;\n", dif ? "v.dif.zyxw" : "1", spe ? "v.spe.zyxw" : "0", "0");
     if (rhw) {
-        /* screen coordinates at Direct3D 9 pixel centres, z as the depth, w
+        /* screen coordinates at the Xbox's pixel centres, z as the depth, w
            for perspective-correct interpolation */
         put(&t, "  float w = v.pos.w != 0 ? 1 / v.pos.w : 1;\n"
-                "  float3 ndc = float3((v.pos.x + 0.5 - vp.x) / vp.z * 2 - 1, 1 - (v.pos.y + 0.5 - vp.y) / vp.w * 2,\n"
+                "  float3 ndc = float3((v.pos.x + 0.53125 - vp.x) / vp.z * 2 - 1, 1 - (v.pos.y + 0.53125 - vp.y) / vp.w * 2,\n"
                 "                      vpz.y != vpz.x ? (v.pos.z - vpz.x) / (vpz.y - vpz.x) : v.pos.z);\n"
                 "  if (hostpos.w != 0) ndc.x *= hostpos.w;\n"
                 "  o.pos = float4(ndc * w, w);\n");
@@ -1169,8 +1171,8 @@ static int apply_shaders(const Bound *b) {
     St *s = &g_st;
     float fog[4], fogcolor[4];
     fog_state(fog, fogcolor);
-    /* Direct3D 9 pixel centres: half a pixel right and down, in clip units */
-    float hostpos[4] = {1.0f / s->vp[2], -1.0f / s->vp[3], (float)s->fogrange, g_squeeze};
+    /* the Xbox's pixel centres: 0.53125 pixels right and down, in clip units */
+    float hostpos[4] = {1.0625f / s->vp[2], -1.0625f / s->vp[3], (float)s->fogrange, g_squeeze};
 
     if (g_vsh) {
         static CbVs cb;

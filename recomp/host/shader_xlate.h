@@ -16,7 +16,7 @@ enum { XS_SM2, XS_SM4 };
    the host's fog parameters (start, end, density, D3DFOG mode) for the fog
    factor computed from oFog.
    SM4: constant buffer b0 holds c[96], the fog parameters and hostpos, whose
-   xy are added to the position times w (Direct3D 9 pixel centres); the
+   xy are added to the position times w (the Xbox's pixel centres); the
    output is struct VARYINGS (SV_Position, COLOR0/1, TEXCOORD0..3, FOG), the
    colours clamped. Defining COLOR_INTERP (nointerpolation) before the text
    gives the colours flat shading. */

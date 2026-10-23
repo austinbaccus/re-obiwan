@@ -638,8 +638,8 @@ static int translate(const char *src, size_t len, int ps, int target, uint32_t d
                           "  else if (hostfog.w == 1) fog = exp(-fc * hostfog.z);\n"
                           "  else if (hostfog.w == 2) fog = exp(-(fc * hostfog.z) * (fc * hostfog.z));\n"
                           "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = saturate(fog);\n");
-            /* SM4: colours clamped as vs_2_0 outputs are, and Direct3D 9's pixel
-               centres (hostpos: the half-pixel offset in clip units) */
+            /* SM4: colours clamped as vs_2_0 outputs are, and the Xbox's pixel
+               centres (hostpos: its 0.53125-pixel offset in clip units) */
             if (x->sm4) o += snprintf(out + o, cap - o, "  o.d0 = saturate(oD0); o.d1 = saturate(oD1); o.pos.xy += hostpos.xy * oPos.w;\n");
             snprintf(out + o, cap - o, "  return o;\n}\n");
         }
