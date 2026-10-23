@@ -59,4 +59,14 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
         /ENTRY:loader_start /SUBSYSTEM:CONSOLE /STACK:0x4000000 /SAFESEH:NO /OPT:NOREF /LARGEADDRESSAWARE)
     set_target_properties(obiwan PROPERTIES LINK_LIBRARIES kernel32)
     add_dependencies(obiwan obiwan_core)
+    # The same game as a windowed program, for a double-click: Obi-Wan.exe
+    # (obiwan.ini settings, obiwan.log, message boxes; see boot.c)
+    add_executable(obiwan_windowed tests/loader.c)
+    target_compile_definitions(obiwan_windowed PRIVATE LOADER_DLL="obiwan_core.dll" LOADER_ENTRY="game_main_windowed" LOADER_RESERVE=0x3FED000)
+    target_compile_options(obiwan_windowed PRIVATE /GS- /O1)
+    target_link_options(obiwan_windowed PRIVATE /BASE:0x10000 /FIXED /DYNAMICBASE:NO /NODEFAULTLIB
+        /ENTRY:loader_start /SUBSYSTEM:WINDOWS /STACK:0x4000000 /SAFESEH:NO /OPT:NOREF /LARGEADDRESSAWARE)
+    set_target_properties(obiwan_windowed PROPERTIES LINK_LIBRARIES kernel32 OUTPUT_NAME "Obi-Wan")
+    add_dependencies(obiwan_windowed obiwan_core)
+    add_dependencies(obiwan obiwan_windowed) # building the game builds both
 endif()
