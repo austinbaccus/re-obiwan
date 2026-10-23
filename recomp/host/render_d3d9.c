@@ -67,6 +67,7 @@ int r_init(uint32_t width, uint32_t height) {
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
+    wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1)); /* the program icon, if it was built with one */
     wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
     wc.lpszClassName = "ObiWanRecomp";
     RegisterClassA(&wc);

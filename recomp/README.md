@@ -121,6 +121,12 @@ file. Its output goes to `obiwan.log` next to it (appended to when the game
 relaunches into a level), and start-up errors and crashes also show in a
 message box.
 
+Both programs use Qui-Gon's HUD portrait as their icon, converted from
+`extracted\data\interface\hud` at build time by `tests\dds_icon.c` (so
+nothing from the disc is committed). Another portrait:
+`cmake build\game -DOBIWAN_ICON=<path to a .dds>`. Without the extracted
+files they get Windows' default icon.
+
 Controllers: Windows XInput pads 1..4 are Xbox ports 1..4 and can be plugged
 in or out while the game runs. A, B, X and Y are the analog face buttons
 (fully pressed), LB is White, RB is Black, the triggers and sticks pass
