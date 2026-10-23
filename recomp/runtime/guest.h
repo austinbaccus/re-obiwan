@@ -59,64 +59,79 @@ extern const unsigned g_functab_count;
 extern uintptr_t g_membase;
 #define MEM(a) ((uint8_t *)(g_membase + (uint32_t)(a)))
 
-static inline uint8_t RD8(const void *p) { return *(const uint8_t *)p; }
-static inline uint16_t RD16(const void *p) { uint16_t v; memcpy(&v, p, 2); return v; }
-static inline uint32_t RD32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
-static inline uint64_t RD64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
-static inline void WR8(void *p, uint8_t v) { *(uint8_t *)p = v; }
-static inline void WR16(void *p, uint16_t v) { memcpy(p, &v, 2); }
-static inline void WR32(void *p, uint32_t v) { memcpy(p, &v, 4); }
-static inline void WR64(void *p, uint64_t v) { memcpy(p, &v, 8); }
+/* The helpers below are each a load, a store or a few operations, used for
+   every guest instruction. Generated functions are so large that MSVC stops
+   inlining plain `inline` functions into them and calls them instead (tens
+   of thousands of calls per file), so they are forced inline. */
+#if defined(_MSC_VER)
+#define GI static __forceinline
+#include <intrin.h>
+#else
+#define GI static inline
+#endif
 
-static inline float RDF32(const void *p) { float v; memcpy(&v, p, 4); return v; }
-static inline double RDF64(const void *p) { double v; memcpy(&v, p, 8); return v; }
-static inline void WRF32(void *p, float v) { memcpy(p, &v, 4); }
-static inline void WRF64(void *p, double v) { memcpy(p, &v, 8); }
+GI uint8_t RD8(const void *p) { return *(const uint8_t *)p; }
+GI uint16_t RD16(const void *p) { uint16_t v; memcpy(&v, p, 2); return v; }
+GI uint32_t RD32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+GI uint64_t RD64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+GI void WR8(void *p, uint8_t v) { *(uint8_t *)p = v; }
+GI void WR16(void *p, uint16_t v) { memcpy(p, &v, 2); }
+GI void WR32(void *p, uint32_t v) { memcpy(p, &v, 4); }
+GI void WR64(void *p, uint64_t v) { memcpy(p, &v, 8); }
+
+GI float RDF32(const void *p) { float v; memcpy(&v, p, 4); return v; }
+GI double RDF64(const void *p) { double v; memcpy(&v, p, 8); return v; }
+GI void WRF32(void *p, float v) { memcpy(p, &v, 4); }
+GI void WRF64(void *p, double v) { memcpy(p, &v, 8); }
 /* 10-byte x87 slot holding a host double */
-static inline void WRF80SLOT(void *p, double v) { memcpy(p, &v, 8); memset((uint8_t *)p + 8, 0, 2); }
-static inline float bits_f32(uint32_t b) { float v; memcpy(&v, &b, 4); return v; }
-static inline double bits_f64(uint64_t b) { double v; memcpy(&v, &b, 8); return v; }
+GI void WRF80SLOT(void *p, double v) { memcpy(p, &v, 8); memset((uint8_t *)p + 8, 0, 2); }
+GI float bits_f32(uint32_t b) { float v; memcpy(&v, &b, 4); return v; }
+GI double bits_f64(uint64_t b) { double v; memcpy(&v, &b, 8); return v; }
+GI uint32_t f32_bits(float f) { uint32_t b; memcpy(&b, &f, 4); return b; }
+GI uint64_t f64_bits(double f) { uint64_t b; memcpy(&b, &f, 8); return b; }
 
 double f80_to_f64(const uint8_t *p);
 void f64_to_f80(uint8_t *p, double v);
 
 /* Flag helpers: carry / signed overflow of a+b, signed overflow of a-b. */
 #define DEF_FLAGS(N, U, S)                                                              \
-    static inline uint8_t carry##N(U a, U b) { return (U)(a + b) < a; }                \
-    static inline uint8_t scarry##N(U a, U b) { U r = (U)(a + b); return (S)((a ^ r) & (b ^ r)) < 0; } \
-    static inline uint8_t sborrow##N(U a, U b) { U r = (U)(a - b); return (S)((a ^ b) & (a ^ r)) < 0; } \
-    static inline U shl##N(U a, uint64_t s) { return s >= N ? 0 : (U)(a << s); }        \
-    static inline U shr##N(U a, uint64_t s) { return s >= N ? 0 : (U)(a >> s); }        \
-    static inline U sar##N(U a, uint64_t s) { return (U)((S)a >> (s >= N ? N - 1 : s)); }
+    GI uint8_t carry##N(U a, U b) { return (U)(a + b) < a; }                \
+    GI uint8_t scarry##N(U a, U b) { U r = (U)(a + b); return (S)((a ^ r) & (b ^ r)) < 0; } \
+    GI uint8_t sborrow##N(U a, U b) { U r = (U)(a - b); return (S)((a ^ b) & (a ^ r)) < 0; } \
+    GI U shl##N(U a, uint64_t s) { return s >= N ? 0 : (U)(a << s); }        \
+    GI U shr##N(U a, uint64_t s) { return s >= N ? 0 : (U)(a >> s); }        \
+    GI U sar##N(U a, uint64_t s) { return (U)((S)a >> (s >= N ? N - 1 : s)); }
 DEF_FLAGS(8, uint8_t, int8_t)
 DEF_FLAGS(16, uint16_t, int16_t)
 DEF_FLAGS(32, uint32_t, int32_t)
 DEF_FLAGS(64, uint64_t, int64_t)
 
-static inline uint8_t popcount64(uint64_t v) {
-    v = v - ((v >> 1) & 0x5555555555555555ull);
-    v = (v & 0x3333333333333333ull) + ((v >> 2) & 0x3333333333333333ull);
-    v = (v + (v >> 4)) & 0x0f0f0f0f0f0f0f0full;
-    return (uint8_t)((v * 0x0101010101010101ull) >> 56);
+GI uint8_t popcount32(uint32_t v) {
+#if defined(_MSC_VER)
+    return (uint8_t)__popcnt(v);
+#else
+    return (uint8_t)__builtin_popcount(v);
+#endif
 }
+GI uint8_t popcount64(uint64_t v) { return (uint8_t)(popcount32((uint32_t)v) + popcount32((uint32_t)(v >> 32))); }
 
 /* float -> int with x86 semantics: NaN and out-of-range give the "integer indefinite" value */
 #define DEF_F2I(N, S, MIN, MAX)                                                \
-    static inline uint##N##_t f2i##N(double v) {                                \
+    GI uint##N##_t f2i##N(double v) {                                \
         if (!(v >= (double)(MIN) && v < -(double)(MIN))) return (uint##N##_t)(MIN); \
         return (uint##N##_t)(S)v;                                               \
     }
 DEF_F2I(16, int16_t, INT16_MIN, INT16_MAX)
 DEF_F2I(32, int32_t, INT32_MIN, INT32_MAX)
 DEF_F2I(64, int64_t, INT64_MIN, INT64_MAX)
-static inline uint8_t f2i8(double v) { return (uint8_t)f2i16(v); }
+GI uint8_t f2i8(double v) { return (uint8_t)f2i16(v); }
 
 /* p-code ROUND rounds "in the current mode": for x87 (FRNDINT, FIST/FISTP)
    that is the rounding control of the guest's FPU control word (bits 10-11),
    for SSE conversions the one in MXCSR (bits 13-14). The CRT's ceil and
    floor switch the x87 mode around FRNDINT, so the host's own mode (always
    round-to-nearest here) is not enough. */
-static inline double rt_round_mode(double v, unsigned rc) {
+GI double rt_round_mode(double v, unsigned rc) {
     switch (rc & 3) {
     case 1: return floor(v);
     case 2: return ceil(v);
@@ -128,9 +143,9 @@ static inline double rt_round_mode(double v, unsigned rc) {
 #define RT_ROUND_SSE(ctx, v) rt_round_mode((v), RD32((ctx)->r + REG_MXCSR) >> 13)
 
 extern const uint8_t g_zero16[16];
-static inline void wide_and(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] & ((const uint8_t *)b)[i]; }
-static inline void wide_or(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] | ((const uint8_t *)b)[i]; }
-static inline void wide_xor(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] ^ ((const uint8_t *)b)[i]; }
+GI void wide_and(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] & ((const uint8_t *)b)[i]; }
+GI void wide_or(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] | ((const uint8_t *)b)[i]; }
+GI void wide_xor(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] ^ ((const uint8_t *)b)[i]; }
 
 /* MMX helpers: 64-bit packed integers */
 void rt_pmaddwd(void *o, const void *a, const void *b);
@@ -164,10 +179,10 @@ uint64_t rt_rdtsc(Ctx *ctx);
 GuestFn rt_lookup(uint32_t addr);
 
 #define DEF_DIV(N, U, S)                                                                    \
-    static inline U rt_udiv##N(Ctx *c, U a, U b) { if (!b) rt_trap(c, TRAP_DIVIDE, 0); return a / b; } \
-    static inline U rt_urem##N(Ctx *c, U a, U b) { if (!b) rt_trap(c, TRAP_DIVIDE, 0); return a % b; } \
-    static inline U rt_sdiv##N(Ctx *c, U a, U b) { if (!b || ((S)b == -1 && (S)a == (S)((U)1 << (N - 1)))) rt_trap(c, TRAP_DIVIDE, 0); return (U)((S)a / (S)b); } \
-    static inline U rt_srem##N(Ctx *c, U a, U b) { if (!b || ((S)b == -1 && (S)a == (S)((U)1 << (N - 1)))) rt_trap(c, TRAP_DIVIDE, 0); return (U)((S)a % (S)b); }
+    GI U rt_udiv##N(Ctx *c, U a, U b) { if (!b) rt_trap(c, TRAP_DIVIDE, 0); return a / b; } \
+    GI U rt_urem##N(Ctx *c, U a, U b) { if (!b) rt_trap(c, TRAP_DIVIDE, 0); return a % b; } \
+    GI U rt_sdiv##N(Ctx *c, U a, U b) { if (!b || ((S)b == -1 && (S)a == (S)((U)1 << (N - 1)))) rt_trap(c, TRAP_DIVIDE, 0); return (U)((S)a / (S)b); } \
+    GI U rt_srem##N(Ctx *c, U a, U b) { if (!b || ((S)b == -1 && (S)a == (S)((U)1 << (N - 1)))) rt_trap(c, TRAP_DIVIDE, 0); return (U)((S)a % (S)b); }
 DEF_DIV(8, uint8_t, int8_t)
 DEF_DIV(16, uint16_t, int16_t)
 DEF_DIV(32, uint32_t, int32_t)

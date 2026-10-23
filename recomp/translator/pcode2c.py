@@ -2,7 +2,10 @@
 
 Every guest function becomes `void f_XXXXXXXX(Ctx *ctx)`. Guest registers
 live in ctx->r[], laid out exactly like Ghidra's x86 register space, so each
-p-code varnode maps to a fixed byte offset. Guest memory is reached through
+p-code varnode maps to a fixed byte offset. Inside a function the general
+registers, the flags and the x87 stack it uses are C locals (loaded at entry,
+written back around calls, returns and traps), so the C compiler can keep
+them in host registers and drop flags nothing reads. Guest memory is reached through
 MEM(addr). Calls become C calls (the guest return address is still pushed on
 the guest stack, so stack layout matches the original), RET becomes `return`,
 and computed jumps dispatch over the targets Ghidra recovered.
@@ -126,6 +129,10 @@ class FunctionTranslator:
         self.needs_dispatch = False  # function has computed jumps: emit one shared switch
         self.resumable = False       # can be entered mid-body (SEH/C++ EH continuations, setjmp)
         self.disassembled = []       # addresses this walk disassembled on demand
+        self.cache = {}              # cached register class -> set of slots (see plan_cache)
+        self.pending_reload = []     # registers spilled for one op that took their address
+        self.ulocal = {}             # unique offset -> (C local, size) for int-sized temporaries
+        self.pending_ureload = []    # such temporaries written to U for one op that took their address
 
     # ---- varnodes -------------------------------------------------------
     def space(self, v):
@@ -135,13 +142,99 @@ class FunctionTranslator:
         off, size = v.getOffset(), v.getSize()
         return self.ublock[off]
 
+    def uloc(self, v):
+        """The C local of an int-sized temporary, or None."""
+        if not v.isUnique():
+            return None
+        u = self.ulocal.get(v.getOffset())
+        return u[0] if u and u[1] == v.getSize() else None
+
+    # ---- registers kept in C locals -------------------------------------
+    def plan_cache(self):
+        """Which registers this function keeps in locals: the general registers
+        (g0..g7 for EAX..EDI, with their 8/16-bit parts), the flag bytes
+        (f200..) and the x87 stack slots (s0..s7), each class only when every
+        access in the function fits it."""
+        regs = []
+        for ins in self.insns:
+            for op in ins.getPcode():
+                for v in list(op.getInputs()) + ([op.getOutput()] if op.getOutput() else []):
+                    if v.isRegister():
+                        regs.append((v.getOffset(), v.getSize()))
+        gpr = {o // 4 for o, n in regs if o < 0x20}
+        if gpr and all(o % 4 + n <= 4 for o, n in regs if o < 0x20):
+            self.cache['gpr'] = gpr
+        flags = {o for o, n in regs if 0x200 <= o < 0x220}
+        if flags and all(n == 1 for o, n in regs if 0x200 <= o < 0x220):
+            self.cache['flag'] = flags
+        st = {(o - 0x1100) // 16 for o, n in regs if 0x1100 <= o < 0x1180}
+        if st and all(n == 10 and o % 16 == 0 for o, n in regs if 0x1100 <= o < 0x1180):
+            self.cache['st'] = st
+
+    def cached(self, v):
+        if not v.isRegister():
+            return None
+        off = v.getOffset()
+        if off < 0x20 and off // 4 in self.cache.get('gpr', ()):
+            return ('gpr', off // 4, off % 4)
+        if off in self.cache.get('flag', ()):
+            return ('flag', off, 0)
+        if 0x1100 <= off < 0x1180 and (off - 0x1100) // 16 in self.cache.get('st', ()):
+            return ('st', (off - 0x1100) // 16, 0)
+        return None
+
+    def spill_lines(self, which=None):
+        out = []
+        for i in sorted(self.cache.get('gpr', ())):
+            if which is None or ('gpr', i) in which:
+                out.append(f'WR32((ctx->r + 0x{4 * i:x}), g{i});')
+        for o in sorted(self.cache.get('flag', ())):
+            if which is None or ('flag', o) in which:
+                out.append(f'WR8((ctx->r + 0x{o:x}), f{o:x});')
+        for i in sorted(self.cache.get('st', ())):
+            if which is None or ('st', i) in which:
+                out.append(f'WRF80SLOT((ctx->r + 0x{0x1100 + 16 * i:x}), s{i});')
+        return out
+
+    def reload_lines(self, which=None):
+        out = []
+        for i in sorted(self.cache.get('gpr', ())):
+            if which is None or ('gpr', i) in which:
+                out.append(f'g{i} = RD32((ctx->r + 0x{4 * i:x}));')
+        for o in sorted(self.cache.get('flag', ())):
+            if which is None or ('flag', o) in which:
+                out.append(f'f{o:x} = RD8((ctx->r + 0x{o:x}));')
+        for i in sorted(self.cache.get('st', ())):
+            if which is None or ('st', i) in which:
+                out.append(f's{i} = RDF64((ctx->r + 0x{0x1100 + 16 * i:x}));')
+        return out
+
+    def spill(self):
+        return ' '.join(self.spill_lines())
+
+    def reload(self):
+        return ' '.join(self.reload_lines())
+
     def ptr(self, v):
         sp, off = self.space(v), v.getOffset()
         if sp == 'register':
             if off == FS_OFFSET:
                 self.features['fs'] += 1
+            c = self.cached(v)
+            if c is not None:
+                # an op that needs the register's address: write the local
+                # back for it and read it again after it (see translate)
+                key = (c[0], c[1])
+                for line in self.spill_lines({key}):
+                    self.emit(line)
+                self.pending_reload.append(key)
             return f'(ctx->r + 0x{off:x})'
         if sp == 'unique':
+            name = self.uloc(v)
+            if name:
+                n = v.getSize()
+                self.emit(f'WR{n * 8}((U + {self.map_unique(v)}), {name});')
+                self.pending_ureload.append(v)
             return f'(U + {self.map_unique(v)})'
         if sp == 'ram':
             return f'MEM(0x{off:08x}u)'
@@ -149,6 +242,14 @@ class FunctionTranslator:
 
     def rd(self, v):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'gpr':
+            return f'g{c[1]}' if size == 4 else f'(({ut(size)})(g{c[1]} >> {8 * c[2]}))'
+        if c is not None and c[0] == 'flag':
+            return f'f{c[1]:x}'
+        name = self.uloc(v)
+        if name:
+            return name
         if self.space(v) == 'const':
             val = v.getOffset() & ((1 << (8 * size)) - 1) if size <= 8 else v.getOffset()
             return f'(({ut(size)})0x{val:x}ull)' if size in INT_SIZES else self.unsup(f'const size {size}')
@@ -160,6 +261,21 @@ class FunctionTranslator:
 
     def wr(self, v, expr):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'gpr':
+            if size == 4:
+                self.emit(f'g{c[1]} = (uint32_t)({expr});')
+            else:
+                mask = ((1 << (8 * size)) - 1) << (8 * c[2])
+                self.emit(f'g{c[1]} = (g{c[1]} & 0x{~mask & 0xFFFFFFFF:x}u) | ((uint32_t)({ut(size)})({expr}) << {8 * c[2]});')
+            return
+        if c is not None and c[0] == 'flag':
+            self.emit(f'f{c[1]:x} = (uint8_t)({expr});')
+            return
+        name = self.uloc(v)
+        if name:
+            self.emit(f'{name} = ({ut(size)})({expr});')
+            return
         if size == 10:
             self.emit(f'WR64({self.ptr(v)}, (uint64_t)({expr}));')
             return
@@ -169,6 +285,12 @@ class FunctionTranslator:
 
     def rdf(self, v):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'st':
+            return f's{c[1]}'
+        name = self.uloc(v)
+        if name and size in (4, 8):
+            return f'bits_f{size * 8}({name})'
         if self.space(v) == 'const':
             bits = v.getOffset()
             return {4: f'bits_f32(0x{bits:x}u)', 8: f'bits_f64(0x{bits:x}ull)'}.get(size) or self.unsup('fconst')
@@ -180,6 +302,14 @@ class FunctionTranslator:
 
     def wrf(self, v, expr):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'st':
+            self.emit(f's{c[1]} = (double)({expr});')
+            return
+        name = self.uloc(v)
+        if name and size in (4, 8):
+            self.emit(f'{name} = f{size * 8}_bits(({"float" if size == 4 else "double"})({expr}));')
+            return
         if size == 4:
             self.emit(f'WRF32({self.ptr(v)}, (float)({expr}));')
         elif size == 8:
@@ -214,14 +344,18 @@ class FunctionTranslator:
             self.labels_used.add(f'L_{addr:08x}')
             return f'goto L_{addr:08x};'
         self.features['tailjump'] += 1
-        return f'{{ {self.call_expr(addr)} return; }}'
+        return f'{{ {self.spill()} {self.call_only(addr)} return; }}'
 
-    def call_expr(self, addr):
+    def call_only(self, addr):
         # RECOMP_TRACE_CALLS=2 logs direct calls too (see rt_trace_call)
         pre = f'if (g_trace_calls > 1) rt_trace_call(ctx, 0x{addr:08x}u); '
         if addr in self.known:
             return f'{pre}f_{addr:08x}(ctx);'
         return f'rt_call(ctx, 0x{addr:08x}u);'
+
+    def call_expr(self, addr):
+        """A call: the callee sees and changes the registers in ctx."""
+        return f'{{ {self.spill()} {self.call_only(addr)} {self.reload()} }}'
 
     # ---- translation ----------------------------------------------------
     def collect_uniques(self):
@@ -245,6 +379,18 @@ class FunctionTranslator:
             starts[lo] = (compact, hi)
             compact += (hi - lo + 7) & ~7
         self.uniq_size = max(compact, 8)
+        # a temporary that is the only varnode in its block and of an integer
+        # size becomes a C local (it still has its place in U for ops that
+        # need its address)
+        ids = collections.defaultdict(set)
+        for lo, hi in spans:
+            ids[lo].add(hi - lo)
+        for lo, hi in merged:
+            sizes = ids.get(lo, set())
+            if len(sizes) == 1 and next(iter(sizes)) == hi - lo and hi - lo in INT_SIZES:
+                inner = [o for o in ids if lo < o < hi]
+                if not inner:
+                    self.ulocal[lo] = (f'u{starts[lo][0]}', hi - lo)
         # map every unique offset used to its compact position
         mlist = [(lo, starts[lo][0], starts[lo][1]) for lo, _ in merged]
         import bisect
@@ -404,6 +550,7 @@ class FunctionTranslator:
         if self.resumable:
             self.needs_dispatch = True
         self.collect_uniques()
+        self.plan_cache()
         for idx, ins in enumerate(self.insns):
             a = ins.getAddress().getOffset()
             self.lines.append(f'L_{a:08x}: /* {ins} */')
@@ -416,6 +563,13 @@ class FunctionTranslator:
                 if i in rel_targets:
                     self.lines.append(f'L_{a:08x}_{i}:;')
                 self.op(ins, a, i, op, ops)
+                if self.pending_reload:
+                    for line in self.reload_lines(set(self.pending_reload)):
+                        self.emit(line)
+                    self.pending_reload = []
+                for v in self.pending_ureload:
+                    self.emit(f'{self.uloc(v)} = RD{v.getSize() * 8}((U + {self.map_unique(v)}));')
+                self.pending_ureload = []
             if len(ops) in rel_targets:
                 self.lines.append(f'L_{a:08x}_{len(ops)}:;')
             if ins.getMnemonicString().upper() in ('FPREM', 'FPREM1'):
@@ -449,6 +603,8 @@ class FunctionTranslator:
         if m == 'COPY':
             if o.getSize() in INT_SIZES:
                 self.wr(o, self.rd(ins_[0]))
+            elif o.getSize() == 10 and (self.cached(o) or self.cached(ins_[0])) and self.space(ins_[0]) != 'const':
+                self.wrf(o, self.rdf(ins_[0]))  # the x87 stack moving: values, not bytes
             else:
                 self.emit(f'memcpy({self.ptr(o)}, {self.ptr(ins_[0])}, {o.getSize()});')
         elif m == 'LOAD':
@@ -457,7 +613,7 @@ class FunctionTranslator:
             if n in INT_SIZES:
                 self.wr(o, f'RD{n * 8}(MEM({addr}))')
             elif n == 10:
-                self.emit(f'WRF80SLOT({self.ptr(o)}, f80_to_f64(MEM({addr})));')
+                self.wrf(o, f'f80_to_f64(MEM({addr}))')
             else:
                 self.emit(f'memcpy({self.ptr(o)}, MEM({addr}), {n});')
         elif m == 'STORE':
@@ -493,11 +649,11 @@ class FunctionTranslator:
             self.emit(self.call_expr(ins_[0].getOffset()))
         elif m == 'CALLIND':
             self.features['callind'] += 1
-            self.emit(f'rt_call(ctx, {self.rd(ins_[0])});')
+            self.emit(f'{{ uint32_t t_call = {self.rd(ins_[0])}; {self.spill()} rt_call(ctx, t_call); {self.reload()} }}')
         elif m == 'RETURN':
             # the return address lets rt_resume continue the caller after a
             # function that was entered mid-body (exception continuation) returns
-            self.emit(f'ctx->ret_ip = {self.rd(ins_[0])}; return;')
+            self.emit(f'{{ uint32_t t_ret = {self.rd(ins_[0])}; {self.spill()} ctx->ret_ip = t_ret; return; }}')
         elif m == 'CALLOTHER':
             self.userop(a, op, o, ins_)
         elif m in BINOP:
@@ -515,6 +671,8 @@ class FunctionTranslator:
             self.wr(o, f'{self.signed(ins_[0])} {CMP_S[m]} {self.signed(ins_[1])}')
         elif m in ('INT_DIV', 'INT_REM', 'INT_SDIV', 'INT_SREM'):
             n = o.getSize()
+            for line in self.spill_lines():  # a divide error traps with the registers in ctx
+                self.emit(line)
             fn = {'INT_DIV': 'udiv', 'INT_REM': 'urem', 'INT_SDIV': 'sdiv', 'INT_SREM': 'srem'}[m]
             self.wr(o, f'rt_{fn}{n * 8}(ctx, {self.rd(ins_[0])}, {self.rd(ins_[1])})')
         elif m == 'INT_NEGATE':
@@ -605,7 +763,7 @@ class FunctionTranslator:
             fargs = ', '.join(self.rdf(x) for x in args)
             self.wrf(o, f'{USEROPS_FLOAT[name]}({fargs})')
         elif name == 'swi':
-            self.emit(f'rt_interrupt(ctx, 0x{a:08x}u, {self.rd(args[0])});')
+            self.emit(f'{{ uint32_t t_int = {self.rd(args[0])}; {self.spill()} rt_interrupt(ctx, 0x{a:08x}u, t_int); {self.reload()} }}')
         elif name == 'rdtsc' and o is not None:
             self.wr(o, 'rt_rdtsc(ctx)')
         elif name in USEROPS_PACKED and o is not None:
@@ -621,7 +779,7 @@ class FunctionTranslator:
             # anything else has no host equivalent (privileged instructions,
             # or padding decoded as code): trap if it is ever reached
             self.features['userop_trap_' + name] += 1
-            self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
+            self.emit(f'{self.spill()} rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
 
     def render(self):
         # instructions are emitted in address order, and a function body can
@@ -629,6 +787,14 @@ class FunctionTranslator:
         # so always start by jumping to the entry
         out = [f'void f_{self.entry:08x}(Ctx *ctx) {{ /* {self.func.getName(True)} */',
                f'    uint8_t U[{self.uniq_size}];']
+        for name, n in sorted(set(self.ulocal.values())):
+            out.append(f'    {ut(n)} {name} = 0;')
+        for i in sorted(self.cache.get('gpr', ())):
+            out.append(f'    uint32_t g{i} = RD32((ctx->r + 0x{4 * i:x}));')
+        for o in sorted(self.cache.get('flag', ())):
+            out.append(f'    uint8_t f{o:x} = RD8((ctx->r + 0x{o:x}));')
+        for i in sorted(self.cache.get('st', ())):
+            out.append(f'    double s{i} = RDF64((ctx->r + 0x{0x1100 + 16 * i:x}));')
         if self.needs_dispatch:
             out.append('    uint32_t t_dispatch;')
             # every instruction is a possible target of a computed jump whose
@@ -641,7 +807,7 @@ class FunctionTranslator:
         if self.entry in self.insn_addrs:
             out.append(f'    goto L_{self.entry:08x};')
         else:  # Ghidra has no instruction at the entry (a stray 1-byte function)
-            out.append(f'    rt_trap(ctx, TRAP_MISSING_FUNCTION, 0x{self.entry:08x}u);')
+            out.append(f'    {self.spill()} rt_trap(ctx, TRAP_MISSING_FUNCTION, 0x{self.entry:08x}u);')
         for line in self.lines:
             if line.endswith(':;') and line.split(':')[0] not in self.labels_used:
                 continue
@@ -656,7 +822,7 @@ class FunctionTranslator:
             out.append('    switch (t_dispatch) {')
             for t in sorted(self.insn_addrs):
                 out.append(f'    case 0x{t:08x}u: goto L_{t:08x};')
-            out.append('    default: rt_jump(ctx, t_dispatch); return;')
+            out.append(f'    default: {self.spill()} rt_jump(ctx, t_dispatch); return;')
             out.append('    }')
         out.append('}')
         return '\n'.join(out)

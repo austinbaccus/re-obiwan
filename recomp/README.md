@@ -22,7 +22,14 @@ is a translation of the game's code.
   translator emits one C function per guest function: `void f_XXXXXXXX(Ctx *ctx)`.
   - Registers are bytes in `ctx->r`, at the offsets of Ghidra's x86 register
     space, so any p-code varnode (including partial registers and flags) maps
-    to a fixed location. Temporaries become a per-function local buffer.
+    to a fixed location. Inside a function, the general registers (with their
+    8- and 16-bit parts), the flags and the x87 stack it uses are C locals,
+    loaded from `ctx->r` at entry and written back around calls, returns,
+    traps and any op that needs a register's address; integer temporaries are
+    locals too. The C compiler then keeps them in host registers and drops
+    flag computations nothing reads (about 5x faster than keeping everything
+    in `ctx->r`). The small access helpers in `guest.h` are forced inline:
+    the generated functions are too large for MSVC to inline them otherwise.
   - Memory is `MEM(addr)`: `g_membase + addr`. The image keeps its original
     addresses.
   - `CALL` becomes a C call; the guest return address is still pushed on the
@@ -113,6 +120,9 @@ The game reads its files from the folder that holds `default.xbe` and keeps
 its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
 next to the executable. Environment switches for unattended runs:
 
+- `RECOMP_PROFILE=seconds`: after that long, sample every guest thread's
+  host instruction pointer about once a millisecond for ten seconds and
+  print the 40 functions found running most often (self time).
 - `RECOMP_STALL=seconds`: when no frame has been presented for that long,
   print every guest thread's guest and host stack (three samples, then exit).
 - `RECOMP_INPUT="300:START,700:A,1950:LSUP:900"`: press a gamepad button for
@@ -239,5 +249,5 @@ numbers. Known gaps, roughly in the order they will matter:
 - Tricks that rely on the real return address (`_alloca_probe`,
   `__SEH_prolog`, code that pops its own return address) need special
   handling in the runtime.
-- Generated code is correct but naive: every register access goes through
-  `ctx->r`. Register caching and flag elimination come later.
+- Indirect calls still go through `rt_call`'s lookup; calls to proven
+  virtual-call targets could be direct.

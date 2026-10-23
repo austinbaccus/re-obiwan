@@ -458,6 +458,10 @@ void kernel_each_thread(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, vo
     int busy = 0;
     for (int i = 0; i < POOL_SIZE; i++) busy += g_pool[i].busy != 0;
     fprintf(stderr, "  (%d pooled host threads busy)\n", busy);
+    kernel_threads(fn, arg);
+}
+
+void kernel_threads(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg) {
     if (g_main_thread.ctx) fn(g_main_thread.thread, g_main_thread.ctx, g_main_thread.name, arg);
     for (int i = 0; i < POOL_SIZE; i++)
         if (g_pool[i].busy) fn(g_pool[i].thread, g_pool[i].ctx, g_pool[i].name, arg);

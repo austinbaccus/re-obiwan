@@ -23,7 +23,9 @@
 
 void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
 
+#include <mmsystem.h>
 #pragma comment(lib, "dbghelp.lib")
+#pragma comment(lib, "winmm.lib")
 
 /* The generated C carries each guest instruction as a comment on the line
    before its code, so the PDB line of a host address names the guest
@@ -211,6 +213,70 @@ static DWORD WINAPI stall_watchdog(LPVOID p) {
     }
 }
 
+/* RECOMP_PROFILE=seconds: after that long, sample every guest thread's host
+   instruction pointer about once a millisecond for ten seconds, then print
+   the functions found running most often (self time; recompiled functions
+   are named after their guest address) and the modules outside the game. */
+#define PROFILE_MAX 200000
+static DWORD64 *g_samples;
+static int g_nsamples;
+
+static void sample_thread(HANDLE thread, Ctx *g, const char *what, void *arg) {
+    (void)g; (void)what; (void)arg;
+    if (SuspendThread(thread) == (DWORD)-1) return;
+    CONTEXT c = {0};
+    c.ContextFlags = CONTEXT_CONTROL;
+    if (GetThreadContext(thread, &c) && g_nsamples < PROFILE_MAX) g_samples[g_nsamples++] = c.Eip;
+    ResumeThread(thread);
+}
+
+static int cmp_count(const void *a, const void *b) {
+    const DWORD64 *x = a, *y = b;
+    return x[1] < y[1] ? 1 : x[1] > y[1] ? -1 : 0;
+}
+
+static DWORD WINAPI profiler(LPVOID p) {
+    Sleep((DWORD)(intptr_t)p * 1000);
+    g_samples = malloc(PROFILE_MAX * sizeof *g_samples);
+    timeBeginPeriod(1);
+    uint32_t f0 = d3d_frame_count();
+    DWORD t0 = GetTickCount();
+    while (GetTickCount() - t0 < 10000) { kernel_threads(sample_thread, NULL); Sleep(1); }
+    uint32_t frames = d3d_frame_count() - f0;
+    init_symbols();
+    /* (function start, count) pairs */
+    static DWORD64 fn[PROFILE_MAX][2];
+    int nf = 0;
+    HANDLE proc = GetCurrentProcess();
+    for (int i = 0; i < g_nsamples; i++) {
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0};
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0, start = SymFromAddr(proc, g_samples[i], &disp, sym) ? sym->Address : SymGetModuleBase64(proc, g_samples[i]);
+        int k = 0;
+        while (k < nf && fn[k][0] != start) k++;
+        if (k == nf) { fn[nf][0] = start; fn[nf][1] = 0; nf++; }
+        fn[k][1]++;
+    }
+    qsort(fn, nf, sizeof fn[0], cmp_count);
+    fprintf(stderr, "\nprofile: %d samples over 10 s, %u frames presented\n", g_nsamples, frames);
+    for (int k = 0; k < nf && k < 40; k++) {
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0}, mod[MAX_PATH] = "?";
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        HMODULE m = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)fn[k][0], &m);
+        if (m) GetModuleFileNameA(m, mod, sizeof mod);
+        const char *name = SymFromAddr(proc, fn[k][0], &disp, sym) && !disp ? sym->Name : strrchr(mod, '\\') ? strrchr(mod, '\\') + 1 : mod;
+        fprintf(stderr, "profile: %5.1f%%  %s\n", 100.0 * fn[k][1] / g_nsamples, name);
+    }
+    fflush(stderr);
+    return 0;
+}
+
 #define GUEST_RAM_START 0x00600000u
 #define GUEST_RAM_SIZE  0x03A00000u /* up to 64 MB, like the console */
 
@@ -223,6 +289,8 @@ static int run(int argc, char **argv) {
     if (getenv("RECOMP_STALL"))
         CreateThread(NULL, 0, stall_watchdog, (void *)(intptr_t)atoi(getenv("RECOMP_STALL")), 0, NULL);
     if (getenv("RECOMP_TRACE_CALLS")) g_trace_calls = atoi(getenv("RECOMP_TRACE_CALLS"));
+    if (getenv("RECOMP_PROFILE"))
+        CreateThread(NULL, 0, profiler, (void *)(intptr_t)atoi(getenv("RECOMP_PROFILE")), 0, NULL);
 
     XbeInfo xbe;
     /* Host threads must exist before the XBE replaces the loader's PE header

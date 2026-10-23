@@ -56,6 +56,7 @@ void kernel_run_thread(uint32_t start_routine, uint32_t start_context, uint32_t 
 
 Ctx *kernel_current_ctx(void); /* the guest context of the calling host thread, or NULL */
 void kernel_each_thread(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg); /* every running guest thread */
+void kernel_threads(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg); /* the same, quietly */
 uint32_t d3d_frame_count(void); /* hooks_d3d.c: frames presented so far */
 void host_watch(uint32_t addr, uint32_t len); /* boot.c: log writes to guest bytes (debugging) */
 void native_init(void); /* native.c: RECOMP_NATIVE, original x86 code for chosen functions (debugging) */
