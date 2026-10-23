@@ -19,6 +19,7 @@
 #include "kernel.h"
 #include "xbe_image.h"
 #include "render.h"
+#include "audio.h"
 
 void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
 
@@ -178,6 +179,7 @@ static int run(int argc, char **argv) {
        afterwards Direct3D's device creation blocks (its driver threads never
        come up in this process), see render_d3d9.c. */
     if (!getenv("RECOMP_HEADLESS")) r_init(640, 480);
+    au_init(); /* XAudio2's threads, likewise */
     kernel_prepare_threads();
     DWORD old;
     VirtualProtect((void *)0x10000, 0x51a000, PAGE_EXECUTE_READWRITE, &old);

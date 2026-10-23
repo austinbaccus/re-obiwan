@@ -67,6 +67,14 @@ is a translation of the game's code.
   reference; `render_common.c` holds what both share (texture formats and
   swizzling, vertex formats, the Xbox state encodings).
 
+- **Sound** (`host/hooks_dsound.c`, `host/audio.c`): DirectSound is replaced
+  at its API too. Each sound buffer is an XAudio2 voice playing a host copy
+  of its data (Xbox ADPCM decoded to PCM) with DirectSound's play, stop,
+  loop, cursor, volume and frequency semantics, and 3D buffers get distance
+  attenuation and a stereo pan. Streams (music, speech) are still silent.
+  The engine starts before the XBE is loaded, like the Direct3D device:
+  Windows cannot create threads in the process afterwards.
+
 ## Running it
 
 ```powershell
@@ -139,6 +147,9 @@ next to the executable. Environment switches for unattended runs:
   only the a-th to b-th of each frame.
 - `RECOMP_VSLOG=1`: log shader assembly, vertex declarations, the vertex
   shader constants set (each register/count once) and stream strides.
+- `RECOMP_DSLOG=1`: log sound buffers as they are created and played, and
+  each DirectSound interface method the game calls (once). `RECOMP_NOAUDIO=1`
+  runs silent.
 - `RECOMP_RSLOG=1`: log each change of a deferred render state (D3D8 3948
   indices 82..115, read from `D3D_g_RenderState` before each draw).
 - `RECOMP_FOG=start,end,RRGGBB`: force linear fog on every draw, to check the
