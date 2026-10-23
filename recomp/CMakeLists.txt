@@ -70,4 +70,26 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     set_target_properties(obiwan_windowed PROPERTIES LINK_LIBRARIES kernel32 OUTPUT_NAME "Obi-Wan")
     add_dependencies(obiwan_windowed obiwan_core)
     add_dependencies(obiwan obiwan_windowed) # building the game builds both
+
+    # Program icon: one of the game's HUD portraits, converted at build time
+    # (nothing from the disc is committed). Without the extracted files the
+    # programs build with Windows' default icon.
+    set(OBIWAN_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../extracted/data/interface/hud/HUD_enemyQuiGon.dds" CACHE FILEPATH
+        "DXT texture for the program icon (e.g. HUD_enemyDarthMaul.dds)")
+    if(EXISTS "${OBIWAN_ICON}")
+        add_executable(dds_icon tests/dds_icon.c)
+        set(ICON_FILE "${CMAKE_CURRENT_BINARY_DIR}/obiwan.ico")
+        add_custom_command(OUTPUT "${ICON_FILE}" COMMAND dds_icon "${OBIWAN_ICON}" "${ICON_FILE}"
+                           DEPENDS dds_icon "${OBIWAN_ICON}" VERBATIM)
+        add_custom_target(obiwan_icon DEPENDS "${ICON_FILE}")
+        set(ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/obiwan_icon.rc")
+        file(WRITE "${ICON_RC}" "1 ICON \"${ICON_FILE}\"\n") # resource 1: also the window's icon (render_*.c)
+        set_source_files_properties("${ICON_RC}" PROPERTIES OBJECT_DEPENDS "${ICON_FILE}")
+        foreach(t obiwan obiwan_windowed)
+            target_sources(${t} PRIVATE "${ICON_RC}")
+            add_dependencies(${t} obiwan_icon)
+        endforeach()
+    else()
+        message(STATUS "No ${OBIWAN_ICON}: the programs get the default icon")
+    endif()
 endif()
