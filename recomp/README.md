@@ -211,6 +211,11 @@ numbers. Known gaps, roughly in the order they will matter:
 - x87 is modelled with 64-bit doubles. The harness runs the original code
   with the FPU in 53-bit precision mode, which is what makes results match;
   80-bit precision differences on the real console are not modelled.
+- x87 rounding (FRNDINT, FIST/FISTP) follows the rounding control the guest
+  loads with FLDCW, and SSE conversions the one in MXCSR. The CRT's `ceil`
+  and `floor` switch modes around FRNDINT; with round-to-nearest, `ceil(0.5)`
+  was 0, and the physics step could not halve its time step, so walking
+  into a wall immobilized and killed the player (#51).
 - Tricks that rely on the real return address (`_alloca_probe`,
   `__SEH_prolog`, code that pops its own return address) need special
   handling in the runtime.

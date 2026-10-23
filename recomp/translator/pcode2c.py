@@ -581,7 +581,13 @@ class FunctionTranslator:
         elif m == 'TRUNC':
             self.wr(o, f'f2i{min(o.getSize(), 8) * 8}({self.rdf(ins_[0])})')
         elif m == 'ROUND':
-            self.wrf(o, f'nearbyint({self.rdf(ins_[0])})')
+            # in the guest's rounding mode: the x87 control word or MXCSR
+            mn = ins.getMnemonicString().upper()
+            mode = 'X87' if mn.startswith('F') else 'SSE' if mn.startswith('CVT') else None
+            if mode:
+                self.wrf(o, f'RT_ROUND_{mode}(ctx, {self.rdf(ins_[0])})')
+            else:
+                self.wrf(o, f'nearbyint({self.rdf(ins_[0])})')
         elif m == 'FLOAT_FLOOR':
             self.wrf(o, f'floor({self.rdf(ins_[0])})')
         elif m == 'FLOAT_CEIL':

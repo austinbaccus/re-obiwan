@@ -111,6 +111,22 @@ DEF_F2I(32, int32_t, INT32_MIN, INT32_MAX)
 DEF_F2I(64, int64_t, INT64_MIN, INT64_MAX)
 static inline uint8_t f2i8(double v) { return (uint8_t)f2i16(v); }
 
+/* p-code ROUND rounds "in the current mode": for x87 (FRNDINT, FIST/FISTP)
+   that is the rounding control of the guest's FPU control word (bits 10-11),
+   for SSE conversions the one in MXCSR (bits 13-14). The CRT's ceil and
+   floor switch the x87 mode around FRNDINT, so the host's own mode (always
+   round-to-nearest here) is not enough. */
+static inline double rt_round_mode(double v, unsigned rc) {
+    switch (rc & 3) {
+    case 1: return floor(v);
+    case 2: return ceil(v);
+    case 3: return trunc(v);
+    default: return nearbyint(v);
+    }
+}
+#define RT_ROUND_X87(ctx, v) rt_round_mode((v), RD16((ctx)->r + REG_FPUCW) >> 10)
+#define RT_ROUND_SSE(ctx, v) rt_round_mode((v), RD32((ctx)->r + REG_MXCSR) >> 13)
+
 extern const uint8_t g_zero16[16];
 static inline void wide_and(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] & ((const uint8_t *)b)[i]; }
 static inline void wide_or(void *o, const void *a, const void *b, int n) { for (int i = 0; i < n; i++) ((uint8_t *)o)[i] = ((const uint8_t *)a)[i] | ((const uint8_t *)b)[i]; }
