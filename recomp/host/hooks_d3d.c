@@ -10,6 +10,8 @@
    registers with D3DResource_Register) only have the encoded fields. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
@@ -165,10 +167,63 @@ HOOK(D3D_GetAdapterDisplayMode) {
    (0x36a080) does; CD3DContext keeps its viewport right after its copy */
 HOOK(D3DDevice_GetDeviceCaps) { memcpy(MEM(ARG(ctx, 0)), MEM(0x00441ad8), 0x35 * 4); RET(D3DDevice_GetDeviceCaps, 0); }
 HOOK(D3DDevice_Release) { RET(D3DDevice_Release, 0); }
+/* Frame rate (#43). The game limits itself in its frame timer: the end of
+   each frame (FUN_000e5480) spins until 1000 / max_fps ms have passed since
+   the frame began, max_fps being the sys_fpsclamp cvar (120), handed over
+   once at start-up through FUN_000e51e0(min_fps, max_fps). That spin keeps a
+   core busy, and under RECOMP_FIXEDFPS steps shorter than 1/120 s it waits
+   for the fixed clock's fallback. So the timer gets a limit it never
+   reaches, and the host paces frames itself, sleeping: at the game's 120 a
+   second, or RECOMP_MAXFPS=n (0: no limit). Vsync applies on top;
+   RECOMP_NOVSYNC=1 turns it off. */
+#define FPS_LIMITS 0x000e51e0u /* frame timer->SetLimits(min_fps, max_fps), thiscall, ret 8 */
+static float g_max_fps = -1;   /* -1: the game's own, once it hands it over */
+
+static void set_fps_limits(Ctx *ctx) {
+    uint32_t timer = RD32(ctx->r + REG_ECX), esp = RD32(ctx->r + REG_ESP);
+    float game_max, never = 1e6f;
+    memcpy(&game_max, MEM(esp + 8), 4);
+    WR32(MEM(timer + 0x28), RD32(MEM(esp + 4)));
+    memcpy(MEM(timer + 0x2c), &never, 4);
+    if (g_max_fps < 0) g_max_fps = game_max;
+    fprintf(stderr, "d3d: the game limits itself to %g frames a second; the host paces at %g%s\n", game_max, g_max_fps,
+            g_max_fps > 0 ? "" : " (no limit)");
+    ctx->ret_ip = RD32(MEM(esp));
+    WR32(ctx->r + REG_ESP, esp + 12);
+}
+
+void framerate_init(void) {
+    const char *e = getenv("RECOMP_MAXFPS");
+    if (e) g_max_fps = (float)atof(e);
+    host_override(FPS_LIMITS, set_fps_limits);
+    timeBeginPeriod(1);
+}
+
+static void frame_cap(void) {
+    static double next;
+    static LARGE_INTEGER freq;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    if (g_max_fps <= 0) return;
+    double period = 1.0 / g_max_fps;
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    double now = (double)c.QuadPart / freq.QuadPart;
+    if (next == 0 || now > next + period) next = now; /* first frame, or fell behind: no catching up */
+    next += period;
+    for (;;) {
+        QueryPerformanceCounter(&c);
+        double left = next - (double)c.QuadPart / freq.QuadPart;
+        if (left <= 0) break;
+        if (left > 0.002) Sleep((DWORD)((left - 0.0015) * 1000)); /* the last moments spin: Sleep is coarse */
+        else YieldProcessor();
+    }
+}
+
 HOOK(D3DDevice_Present) {
     g_frames++;
     if (g_frames <= 5 || g_frames % 60 == 0) fprintf(stderr, "d3d: present #%u\n", g_frames);
     if (g_render) r_present();
+    frame_cap();
     kernel_frame_presented();
     RET(D3DDevice_Present, 0);
 }

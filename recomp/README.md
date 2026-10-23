@@ -187,6 +187,10 @@ next to the executable. Environment switches for unattended runs:
   (needs the Graphics Tools optional feature). `RECOMP_SHADERLOG=1`: print
   each generated fixed-function shader. `RECOMP_NOVSYNC=1`: present
   without waiting for vertical sync.
+- `RECOMP_MAXFPS=n`: at most n frames a second (0: no limit). The game
+  limits itself to 120 (the `sys_fpsclamp` cvar) by spinning at the end of
+  each frame; the host replaces that with sleeping until the next frame is
+  due, at 120 unless this says otherwise. Vsync still applies on top.
 - `RECOMP_STATELOG=frame`: print the device state (blending, stage
   operations, where the first vertex lands on screen) behind every draw of
   that frame.

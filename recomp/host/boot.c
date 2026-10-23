@@ -210,6 +210,10 @@ static const char INI_TEMPLATE[] =
     "; The performance overlay from the start (F3 toggles it)\n"
     ";RECOMP_FPS=1\n"
     "\n"
+    "; Frame rate limit: the game's own is 120, 0 means none. Vsync still\n"
+    "; limits it to the monitor's refresh rate unless RECOMP_NOVSYNC=1.\n"
+    ";RECOMP_MAXFPS=120\n"
+    "\n"
     "; Straight into a level (launch files are in build\\launches)\n"
     ";RECOMP_LAUNCH=..\\launches\\L01_1.bin\n";
 
@@ -460,6 +464,7 @@ static int run(int argc, char **argv) {
        it creates the real main thread and returns. */
     native_init();
     widescreen_init();
+    framerate_init();
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
     /* the window belongs to this thread: pump its messages while the game runs */
