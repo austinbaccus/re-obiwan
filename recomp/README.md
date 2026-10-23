@@ -22,7 +22,14 @@ is a translation of the game's code.
   translator emits one C function per guest function: `void f_XXXXXXXX(Ctx *ctx)`.
   - Registers are bytes in `ctx->r`, at the offsets of Ghidra's x86 register
     space, so any p-code varnode (including partial registers and flags) maps
-    to a fixed location. Temporaries become a per-function local buffer.
+    to a fixed location. Inside a function, the general registers (with their
+    8- and 16-bit parts), the flags and the x87 stack it uses are C locals,
+    loaded from `ctx->r` at entry and written back around calls, returns,
+    traps and any op that needs a register's address; integer temporaries are
+    locals too. The C compiler then keeps them in host registers and drops
+    flag computations nothing reads (about 5x faster than keeping everything
+    in `ctx->r`). The small access helpers in `guest.h` are forced inline:
+    the generated functions are too large for MSVC to inline them otherwise.
   - Memory is `MEM(addr)`: `g_membase + addr`. The image keeps its original
     addresses.
   - `CALL` becomes a C call; the guest return address is still pushed on the
@@ -57,6 +64,27 @@ is a translation of the game's code.
   `obiwan.exe` is the same fixed-address loader as the test harness, grown
   to cover all 64 MB of guest RAM.
 
+- **Renderer** (`host/render*.c`): `hooks_d3d.c` keeps the guest's D3D8
+  objects and hands the device state and draws to `render.h`. The default
+  backend is Direct3D 11 (`render_d3d11.c`): the game's shaders are its
+  source translated to SM4 HLSL (`shader_xlate.c`), and draws that use the
+  fixed-function pipeline get shaders generated from the texture stage and
+  transform states, cached by state. `RECOMP_RENDERER=d3d9` selects the
+  Direct3D 9 backend it was ported from (`render_d3d9.c`), kept as the
+  reference; `render_common.c` holds what both share (texture formats and
+  swizzling, vertex formats, the Xbox state encodings).
+
+- **Sound** (`host/hooks_dsound.c`, `host/audio.c`): DirectSound is replaced
+  at its API too. Each sound buffer is an XAudio2 voice playing a host copy
+  of its data (Xbox ADPCM decoded to PCM) with DirectSound's play, stop,
+  loop, cursor, volume and frequency semantics, and 3D buffers get distance
+  attenuation and a stereo pan. Streams (music, speech) queue the game's
+  packets on a voice and report each one done once it has played; the game
+  reads them with ReadFileEx, whose completion the host kernel delivers as an
+  APC at the thread's next alertable wait, as the Xbox kernel does.
+  The engine starts before the XBE is loaded, like the Direct3D device:
+  Windows cannot create threads in the process afterwards.
+
 ## Running it
 
 ```powershell
@@ -65,7 +93,7 @@ docker compose exec ghidra-mcp bash -c '
   rm -rf /tmp/gcopy && mkdir /tmp/gcopy &&
   cp -r /workspace/ghidra/obiwan.gpr /workspace/ghidra/obiwan.rep /tmp/gcopy/ &&
   find /tmp/gcopy -name "*.lock*" -delete &&
-  /opt/pyghidra-mcp/bin/python3 /workspace/recomp/translator/pcode2c.py /tmp/gcopy /workspace/build/generated leaf'
+  /opt/pyghidra-mcp/bin/python3 /workspace/recomp/translator/pcode2c.py /tmp/gcopy /workspace/build/generated all /workspace/recomp/host/hooks.csv 12'
 
 # 2. Build (Windows, Visual Studio 2022 with C++ tools)
 .\recomp\build.ps1
@@ -74,17 +102,126 @@ docker compose exec ghidra-mcp bash -c '
 .\build\x86\difftest.exe extracted\default.xbe 3 > build\difftest.jsonl
 .\build\x86\difftest.exe extracted\default.xbe --one 002e0936 1   # one function, seed 1
 
-# 4. Boot the game (translate with `all` and host/hooks.csv first)
-.\build\x86\obiwan.exe extracted\default.xbe --trace       # RECOMP_TRACE_CALLS=1 logs indirect calls too
+# 4. Boot the game (translate with `all` and host/hooks.csv first). It has its own
+#    build tree, build\game (the obiwan.exe in build\x86 goes stale); configure it
+#    once from an x64_x86 VS prompt:
+#      cmake -S recomp -B build\game -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build\game --target obiwan
+.\build\game\obiwan.exe extracted\default.xbe   # a 640x480 window; a controller, or Esc = START, Enter = A, arrows = stick
 ```
+
+Controllers: Windows XInput pads 1..4 are Xbox ports 1..4 and can be plugged
+in or out while the game runs. A, B, X and Y are the analog face buttons
+(fully pressed), LB is White, RB is Black, the triggers and sticks pass
+through with a radial dead zone (`RECOMP_DEADZONE=0.15`, a fraction of full
+travel), and rumble reaches the pad (`RECOMP_NORUMBLE=1` turns it off).
 
 The game reads its files from the folder that holds `default.xbe` and keeps
 its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
-next to the executable.
+next to the executable. Environment switches for unattended runs:
 
-The last argument of the translator picks what to emit: `leaf` (functions
+- `RECOMP_PROFILE=seconds`: after that long, sample every guest thread's
+  host instruction pointer about once a millisecond for ten seconds and
+  print the 40 functions found running most often (self time).
+- `RECOMP_STALL=seconds`: when no frame has been presented for that long,
+  print every guest thread's guest and host stack (three samples, then exit).
+- `RECOMP_INPUT="300:START,700:A,1950:LSUP:900"`: press a gamepad button for
+  10 frames (or the given count) at those frame numbers (the attract loop
+  only ends on START); LSUP/LSDOWN/LSLEFT/LSRIGHT push the left stick, and
+  entries can overlap (LSUP with LSRIGHT steers diagonally). A scripted run
+  ignores real controllers and the keyboard, so playing at the same time
+  cannot change a test. Otherwise the keyboard stands in for the pad while
+  the game window has focus: Esc = START, Enter = A, Space = B,
+  Backspace = BACK, arrows = left stick.
+- Scripts for relaunched runs: `RECOMP_INPUT` and `RECOMP_SHOT` take
+  `this run|next run|...`; each relaunch gets what follows the first `|`,
+  and its shots are named `build\shot_<run>_<frame>.bmp`.
+- `RECOMP_HDD=dir`: use another emulated hard disk than `xbox_hdd` next to
+  the executable (a scratch copy for test runs; the real one keeps saves).
+- `RECOMP_LAUNCH=path`: boot with saved launch data instead of a cold boot.
+  When the game relaunches itself (`XLaunchNewImageA`) the host saves the
+  data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.
+- `RECOMP_SHOT="900,1200"`: save the back buffer as `build\shot_<frame>.bmp`
+  at those frames (works with the window hidden or covered).
+- `RECOMP_RES=1920x1440`: render at that size (Direct3D 11 only). The game
+  still draws for its 640x480 back buffer; the host's back buffer, depth
+  buffer and back-buffer viewports are scaled, so 3D, text and the HUD are
+  all drawn at the higher resolution. Off-screen targets (shadow buffers)
+  keep their sizes. Screenshots are saved at the rendered size.
+  A size wider than 4:3 (`5120x1440`) is widescreen: the cameras keep their
+  vertical field of view and see further to the sides (`widescreen.c`
+  widens the angle every camera sets, so culling follows), and the 2D
+  layer (HUD, text, menus) stays 4:3 in the middle, clipped to it.
+  Untextured draws over the whole screen (fades, flashes, cinema bars)
+  still cover the full width.
+- F3 (or `RECOMP_FPS=1` from the start): a performance overlay in the top
+  left corner (Direct3D 11): frames per second, frame time and the worst
+  one, the CPU time of the thread that presents, and where a frame goes:
+  game code (the rest), draw submission with texture uploads and shader
+  compiles, and present. `RECOMP_FPSLOG=1` also prints it to stderr
+  twice a second.
+- `RECOMP_FULLSCREEN=1`: a borderless window covering the primary monitor,
+  with the picture centred pixel for pixel and black around it (Alt+F4
+  quits).
+- `RECOMP_FIXEDFPS=60`: the guest's clocks advance 1/60 s per presented
+  frame (and with the host's while nothing is presented, as when loading),
+  so a frame number shows the same moment however fast the host runs.
+  Comparing renderers: run the same script with `RECOMP_RENDERER=d3d9` and
+  without, and diff the shots (levels match; the intro, which waits on
+  loading threads, does not quite).
+- `RECOMP_RENDERER=d3d9`: the Direct3D 9 reference renderer.
+  `RECOMP_D3DDEBUG=1`: Direct3D 11 debug layer, its messages on stderr
+  (needs the Graphics Tools optional feature). `RECOMP_SHADERLOG=1`: print
+  each generated fixed-function shader. `RECOMP_NOVSYNC=1`: present
+  without waiting for vertical sync.
+- `RECOMP_STATELOG=frame`: print the device state (blending, stage
+  operations, where the first vertex lands on screen) behind every draw of
+  that frame.
+- `RECOMP_SHADOWLOG=frame`: for the draws of that frame that sample a shadow
+  buffer, the light projection constants and where the vertices land in it.
+  `RECOMP_NOSHADOW=1` leaves those draws out; `RECOMP_SHADOWDRAWS=a-b` keeps
+  only the a-th to b-th of each frame.
+- `RECOMP_VSLOG=1`: log shader assembly, vertex declarations, the vertex
+  shader constants set (each register/count once) and stream strides.
+- `RECOMP_DSLOG=1`: log sound buffers as they are created and played, and
+  each DirectSound interface method the game calls (once). `RECOMP_NOAUDIO=1`
+  runs silent.
+- `RECOMP_RSLOG=1`: log each change of a deferred render state (D3D8 3948
+  indices 82..115, read from `D3D_g_RenderState` before each draw).
+- `RECOMP_FOG=start,end,RRGGBB`: force linear fog on every draw, to check the
+  fog path in levels that do not enable fog themselves (draws multiplied into
+  the scene, such as soot decals, fade to white instead).
+- `RECOMP_PROBE=frame,x,y`: after each draw of that frame, report when the
+  back buffer pixel at (x, y) changes and what the draw was (which draw
+  paints an artefact).
+- `RECOMP_DUMPTEX=1` or a guest texture address: write uploaded textures as
+  `build\tex_*.bmp` plus the raw guest bytes.
+- Level select for tests: copy a `launch.last.bin` from a run that relaunched
+  into a level, replace the level name at offset 7 (`L01_1`, `L02_1a`,
+  `L03_2a`, `L04_3a`, `L05_1`, ...) and boot it with `RECOMP_LAUNCH`. The rest
+  of the data still describes the original level, so some levels misbehave
+  (L02_1a fails its mission at once).
+- `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
+  indirect (or all) guest calls. About 100× slower.
+- `RECOMP_NATIVE=117010,0325a0`: run those guest functions, and everything
+  they call, as the original x86 code instead of the recompiled C (the XBE
+  sits at its own addresses, so it runs on the host CPU against the same
+  memory). Kernel calls from native code are forwarded to the host kernel;
+  a hooked library function (D3D, DirectSound, XAPI) reached natively is
+  not. For narrowing a behaviour difference down to a mistranslated
+  function. Runs of the game are not repeatable frame for frame (guest
+  threads), so compare several runs per setting.
+- `host_watch(addr, len)` (boot.c), called from a temporary probe in the
+  generated code: a hardware write watchpoint that prints the recompiled
+  instruction, guest registers and guest return addresses of each write
+  (`RECOMP_WATCHMAX` hits, default 100).
+
+The translator's third argument picks what to emit: `leaf` (functions
 with no calls, computed jumps, special instructions or `fs:` accesses: the
-ones the harness can test in isolation), `all`, or a file of addresses.
+ones the harness can test in isolation), `all`, or a file of addresses. The
+fourth is `host/hooks.csv`, the fifth the number of worker processes: each
+works on its own copy of the scratch project (about 350 MB and a JVM each),
+and 12 of them turn the 25-minute single-process run into 9 minutes.
 `build/generated/meta.json` always lists every function with its translation
 status and features.
 
@@ -104,8 +241,13 @@ numbers. Known gaps, roughly in the order they will matter:
 - x87 is modelled with 64-bit doubles. The harness runs the original code
   with the FPU in 53-bit precision mode, which is what makes results match;
   80-bit precision differences on the real console are not modelled.
+- x87 rounding (FRNDINT, FIST/FISTP) follows the rounding control the guest
+  loads with FLDCW, and SSE conversions the one in MXCSR. The CRT's `ceil`
+  and `floor` switch modes around FRNDINT; with round-to-nearest, `ceil(0.5)`
+  was 0, and the physics step could not halve its time step, so walking
+  into a wall immobilized and killed the player (#51).
 - Tricks that rely on the real return address (`_alloca_probe`,
   `__SEH_prolog`, code that pops its own return address) need special
   handling in the runtime.
-- Generated code is correct but naive: every register access goes through
-  `ctx->r`. Register caching and flag elimination come later.
+- Indirect calls still go through `rt_call`'s lookup; calls to proven
+  virtual-call targets could be direct.

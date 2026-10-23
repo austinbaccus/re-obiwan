@@ -5,7 +5,7 @@
 
    obiwan.exe <default.xbe> [--trace]
    Game files are read from the folder containing default.xbe; the emulated
-   hard disk is build/xbox_hdd next to the executable. */
+   hard disk is xbox_hdd next to the executable, or RECOMP_HDD. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
@@ -18,10 +18,14 @@
 #include "guest.h"
 #include "kernel.h"
 #include "xbe_image.h"
+#include "render.h"
+#include "audio.h"
 
 void host_vcall(Ctx *ctx, uint32_t id); /* hooks_dsound.c */
 
+#include <mmsystem.h>
 #pragma comment(lib, "dbghelp.lib")
+#pragma comment(lib, "winmm.lib")
 
 /* The generated C carries each guest instruction as a comment on the line
    before its code, so the PDB line of a host address names the guest
@@ -56,6 +60,7 @@ static void print_guest_state(Ctx *g) {
             RD32(g->r + REG_EAX), RD32(g->r + REG_ECX), RD32(g->r + REG_EDX), RD32(g->r + REG_EBX),
             RD32(g->r + REG_ESP), RD32(g->r + REG_EBP), RD32(g->r + REG_ESI), RD32(g->r + REG_EDI));
     uint32_t gesp = RD32(g->r + REG_ESP);
+    if (gesp < 0x10000 || gesp >= 0x4000000) return; /* no guest stack (yet) */
     fprintf(stderr, "    guest stack:");
     for (int i = 0; i < 12; i++) fprintf(stderr, " %08x", RD32(MEM(gesp + 4 * i)));
     fprintf(stderr, "\n    guest return addresses:");
@@ -96,6 +101,58 @@ static void print_host_stack(HANDLE thread, const CONTEXT *c) {
     fflush(stderr);
 }
 
+/* host_watch(addr, len): a hardware data watchpoint (debug register 0) on
+   the calling thread. Each write to the guest bytes prints the recompiled
+   instruction that wrote them, the guest registers and the guest return
+   addresses (RECOMP_WATCHMAX hits, default 100). len is 1, 2 or 4, and addr
+   must be a multiple of it. For debugging from a TEMP probe. */
+#define WATCH_ARM 0xE0A7C4E1u
+static uint32_t g_watch_addr, g_watch_len;
+static int g_watch_left;
+
+static LONG CALLBACK watch_handler(EXCEPTION_POINTERS *e) {
+    CONTEXT *c = e->ContextRecord;
+    if (e->ExceptionRecord->ExceptionCode == WATCH_ARM) {
+        c->Dr0 = g_watch_addr;
+        c->Dr7 = (c->Dr7 & ~0xf0003ul) | 1 | 1ul << 16 /* on write */ | (unsigned long)(g_watch_len == 4 ? 3 : g_watch_len - 1) << 18;
+        c->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !(c->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
+    c->Dr6 = 0;
+    if (g_watch_left-- > 0) {
+        init_symbols();
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0};
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        uint32_t v = 0;
+        memcpy(&v, MEM(g_watch_addr), g_watch_len);
+        fprintf(stderr, "watch frame %u: %08x = %08x by %s\n", d3d_frame_count(), g_watch_addr, v,
+                SymFromAddr(GetCurrentProcess(), c->Eip, &disp, sym) ? sym->Name : "?");
+        print_guest_location(GetCurrentProcess(), c->Eip);
+        Ctx *g = kernel_current_ctx();
+        if (g) print_guest_state(g);
+    } else {
+        c->Dr7 &= ~3ul; /* done */
+    }
+    c->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void host_watch(uint32_t addr, uint32_t len) {
+    static int installed;
+    if (!installed++) {
+        AddVectoredExceptionHandler(1, watch_handler);
+        g_watch_left = getenv("RECOMP_WATCHMAX") ? atoi(getenv("RECOMP_WATCHMAX")) : 100;
+    }
+    g_watch_addr = addr;
+    g_watch_len = len;
+    fprintf(stderr, "watch: %u bytes at %08x\n", len, addr);
+    RaiseException(WATCH_ARM, 0, 0, NULL);
+}
+
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
     static int in_filter;
     if (in_filter++) ExitProcess(20);
@@ -108,6 +165,19 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
                 (DWORD)e->ExceptionRecord->ExceptionInformation[1]);
     Ctx *g = kernel_current_ctx();
     if (g) print_guest_state(g);
+    /* RECOMP_CRASHDUMP="addr:len,addr:len": guest memory to print (hex) */
+    for (const char *p = getenv("RECOMP_CRASHDUMP"); p && *p; ) {
+        unsigned a = 0, n = 0;
+        if (sscanf(p, "%x:%x", &a, &n) == 2)
+            for (unsigned i = 0; i < n; i += 4) {
+                if (i % 32 == 0) fprintf(stderr, "%s    %08x:", i ? "\n" : "", a + i);
+                fprintf(stderr, " %08x", RD32(MEM(a + i)));
+            }
+        fprintf(stderr, "\n");
+        p = strchr(p, ',');
+        if (!p) break;
+        p++;
+    }
     print_host_stack(GetCurrentThread(), c);
     ExitProcess(21);
 }
@@ -143,6 +213,70 @@ static DWORD WINAPI stall_watchdog(LPVOID p) {
     }
 }
 
+/* RECOMP_PROFILE=seconds: after that long, sample every guest thread's host
+   instruction pointer about once a millisecond for ten seconds, then print
+   the functions found running most often (self time; recompiled functions
+   are named after their guest address) and the modules outside the game. */
+#define PROFILE_MAX 200000
+static DWORD64 *g_samples;
+static int g_nsamples;
+
+static void sample_thread(HANDLE thread, Ctx *g, const char *what, void *arg) {
+    (void)g; (void)what; (void)arg;
+    if (SuspendThread(thread) == (DWORD)-1) return;
+    CONTEXT c = {0};
+    c.ContextFlags = CONTEXT_CONTROL;
+    if (GetThreadContext(thread, &c) && g_nsamples < PROFILE_MAX) g_samples[g_nsamples++] = c.Eip;
+    ResumeThread(thread);
+}
+
+static int cmp_count(const void *a, const void *b) {
+    const DWORD64 *x = a, *y = b;
+    return x[1] < y[1] ? 1 : x[1] > y[1] ? -1 : 0;
+}
+
+static DWORD WINAPI profiler(LPVOID p) {
+    Sleep((DWORD)(intptr_t)p * 1000);
+    g_samples = malloc(PROFILE_MAX * sizeof *g_samples);
+    timeBeginPeriod(1);
+    uint32_t f0 = d3d_frame_count();
+    DWORD t0 = GetTickCount();
+    while (GetTickCount() - t0 < 10000) { kernel_threads(sample_thread, NULL); Sleep(1); }
+    uint32_t frames = d3d_frame_count() - f0;
+    init_symbols();
+    /* (function start, count) pairs */
+    static DWORD64 fn[PROFILE_MAX][2];
+    int nf = 0;
+    HANDLE proc = GetCurrentProcess();
+    for (int i = 0; i < g_nsamples; i++) {
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0};
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0, start = SymFromAddr(proc, g_samples[i], &disp, sym) ? sym->Address : SymGetModuleBase64(proc, g_samples[i]);
+        int k = 0;
+        while (k < nf && fn[k][0] != start) k++;
+        if (k == nf) { fn[nf][0] = start; fn[nf][1] = 0; nf++; }
+        fn[k][1]++;
+    }
+    qsort(fn, nf, sizeof fn[0], cmp_count);
+    fprintf(stderr, "\nprofile: %d samples over 10 s, %u frames presented\n", g_nsamples, frames);
+    for (int k = 0; k < nf && k < 40; k++) {
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0}, mod[MAX_PATH] = "?";
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        HMODULE m = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)fn[k][0], &m);
+        if (m) GetModuleFileNameA(m, mod, sizeof mod);
+        const char *name = SymFromAddr(proc, fn[k][0], &disp, sym) && !disp ? sym->Name : strrchr(mod, '\\') ? strrchr(mod, '\\') + 1 : mod;
+        fprintf(stderr, "profile: %5.1f%%  %s\n", 100.0 * fn[k][1] / g_nsamples, name);
+    }
+    fflush(stderr);
+    return 0;
+}
+
 #define GUEST_RAM_START 0x00600000u
 #define GUEST_RAM_SIZE  0x03A00000u /* up to 64 MB, like the console */
 
@@ -155,14 +289,33 @@ static int run(int argc, char **argv) {
     if (getenv("RECOMP_STALL"))
         CreateThread(NULL, 0, stall_watchdog, (void *)(intptr_t)atoi(getenv("RECOMP_STALL")), 0, NULL);
     if (getenv("RECOMP_TRACE_CALLS")) g_trace_calls = atoi(getenv("RECOMP_TRACE_CALLS"));
+    if (getenv("RECOMP_PROFILE"))
+        CreateThread(NULL, 0, profiler, (void *)(intptr_t)atoi(getenv("RECOMP_PROFILE")), 0, NULL);
 
     XbeInfo xbe;
     /* Host threads must exist before the XBE replaces the loader's PE header
        at 0x10000: Windows reads it when creating threads (see kernel.c). */
+    /* The window and the Direct3D device are created before the XBE is loaded:
+       afterwards Direct3D's device creation blocks (its driver threads never
+       come up in this process), see render_d3d9.c. */
+    if (!getenv("RECOMP_HEADLESS")) r_init(640, 480);
+    au_init(); /* XAudio2's threads, likewise */
     kernel_prepare_threads();
     DWORD old;
     VirtualProtect((void *)0x10000, 0x51a000, PAGE_EXECUTE_READWRITE, &old);
+    /* Windows reads the executable's PE headers through the PEB's
+       ImageBaseAddress when creating threads (default stack sizes), so once
+       the XBE has replaced them at 0x10000, CreateThread fails with error 193
+       for everyone, including Direct3D's driver. Keep a copy of the headers
+       and point the PEB at it. */
+    void *headers = VirtualAlloc(NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    memcpy(headers, (void *)0x10000, 0x1000);
     if (!xbe_load(argv[1], &xbe)) return 3;
+    *(void **)((char *)__readfsdword(0x30) + 8) = headers; /* PEB->ImageBaseAddress */
+    {
+        HANDLE t = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)Sleep, NULL, 0, NULL);
+        if (t) CloseHandle(t); else fprintf(stderr, "obiwan: CreateThread still fails after the image load (error %lu)\n", GetLastError());
+    }
     kmem_init(GUEST_RAM_START, GUEST_RAM_SIZE);
 
     char game_dir[MAX_PATH], hdd_dir[MAX_PATH], exe[MAX_PATH];
@@ -173,7 +326,8 @@ static int run(int argc, char **argv) {
     GetModuleFileNameA(NULL, exe, sizeof exe);
     slash = strrchr(exe, '\\');
     if (slash) *slash = 0;
-    snprintf(hdd_dir, sizeof hdd_dir, "%s\\xbox_hdd", exe);
+    if (getenv("RECOMP_HDD")) snprintf(hdd_dir, sizeof hdd_dir, "%s", getenv("RECOMP_HDD")); /* a scratch disk for test runs */
+    else snprintf(hdd_dir, sizeof hdd_dir, "%s\\xbox_hdd", exe);
     kernel_init(xbe.kernel_thunk, game_dir, hdd_dir);
     g_kernel_call = kernel_call;
     g_host_vcall = host_vcall;
@@ -182,9 +336,16 @@ static int run(int argc, char **argv) {
 
     /* The XBE entry point runs on the initial thread with no SystemRoutine:
        it creates the real main thread and returns. */
+    native_init();
+    widescreen_init();
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
-    for (;;) Sleep(1000);
+    /* the window belongs to this thread: pump its messages while the game runs */
+    for (;;) {
+        MSG m;
+        while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
+        Sleep(10);
+    }
 }
 
 __declspec(dllexport) void game_main(void) {

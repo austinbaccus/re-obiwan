@@ -18,6 +18,42 @@ own disc image, with the long-term goal of a native Windows 11 build.
 - `analyze-headless` runs Ghidra scripts against the same project. Stop the
   `ghidra-mcp` service first: a Ghidra project can only be opened by one process.
 - `extract-xiso` / `extract-iso` for the disc image.
+- In MCP calls the binary is named `/default.xbe-076e14`.
+
+## The recompiled game (Windows host, `recomp/`)
+
+- Build from PowerShell (cmake is only on PATH in a VS prompt):
+  `cmd /c "\"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat\" amd64_x86 >nul 2>nul && cmake --build build\game --target obiwan 2>&1"`
+  then run `build\game\obiwan.exe extracted\default.xbe`.
+- `recomp/README.md` explains the layout and lists the `RECOMP_*` switches
+  (screenshots, state logs, pixel probe, renderer choice, fixed clock).
+- Test runs: `tools\shots.ps1` (scripted input, screenshots, contact sheet on a
+  scratch hard disk) and `tools\cmp.ps1` (Direct3D 9 against 11, with a diff).
+  `build\launches\*.bin` boot straight into a level via `RECOMP_LAUNCH`, and
+  `RECOMP_FIXEDFPS=60` makes a frame number the same moment in every run.
+- Windows cannot create threads in the process once the XBE is loaded, so
+  anything that needs host threads (Direct3D, XAudio2) starts in `boot.c`
+  before `xbe_load`.
+- `tools\shots.ps1` kills any running `obiwan.exe` first: don't start test
+  runs while the owner is playing. Scripted runs (`RECOMP_INPUT`) ignore real
+  controllers and the keyboard.
+- Game runs are not repeatable frame for frame even with `RECOMP_FIXEDFPS`
+  (guest threads), so compare several runs per setting, or reason from logs
+  and probes. `RECOMP_NATIVE` (original x86 for chosen functions),
+  `host_watch` (hardware watchpoint), `RECOMP_PROFILE` and the F3 overlay
+  are the debugging and performance tools (see the README).
+- Temporary probes go into `build\generated\*.c` (never committed); strip
+  them before committing a build anyone relies on. A change to `guest.h` or
+  a retranslation rebuilds all generated code (about 14 minutes).
+- Retranslating: run the README's Docker command with an output folder
+  other than `build/generated` (say `build/generated_new`), then swap the
+  folders, so a running game and build are not disturbed.
+- Level codes: the mission titles are in `extracted\data\dlg\UI.dlg`
+  (`MissionNNTitle`) and each `data\scripts\<level>.script` names its own;
+  e.g. "Valuable Assistance" is `L05_6`. A launch file for any level is a
+  copy of one in `build\launches` with the name at offset 7 replaced.
+- `recomp/README.md` is Windows-1252 with CRLF line endings: patch it with a
+  byte-level script, not the Edit/Write tools.
 
 ## Rules
 

@@ -2,7 +2,10 @@
 
 Every guest function becomes `void f_XXXXXXXX(Ctx *ctx)`. Guest registers
 live in ctx->r[], laid out exactly like Ghidra's x86 register space, so each
-p-code varnode maps to a fixed byte offset. Guest memory is reached through
+p-code varnode maps to a fixed byte offset. Inside a function the general
+registers, the flags and the x87 stack it uses are C locals (loaded at entry,
+written back around calls, returns and traps), so the C compiler can keep
+them in host registers and drop flags nothing reads. Guest memory is reached through
 MEM(addr). Calls become C calls (the guest return address is still pushed on
 the guest stack, so stack layout matches the original), RET becomes `return`,
 and computed jumps dispatch over the targets Ghidra recovered.
@@ -24,8 +27,11 @@ sections), `all`, or a file with one hex address per line. Coverage statistics f
 are always written to <out-dir>/meta.json.
 """
 import collections
+import glob
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import pyghidra
@@ -77,6 +83,37 @@ def st(size):
     return f'int{size * 8}_t'
 
 
+def fall_through(ins):
+    """Where execution continues after ins. Ghidra drops the fall-through of
+    a call to a function it believes never returns, and has been wrong
+    (XGraphics' 0x39ebd5 returns normally): a call always continues at the
+    next instruction here. A truly non-returning callee never comes back, so
+    the extra code is harmless. Only CALL: Ghidra gives tail-call JMPs (the
+    EH stubs' `jmp ___CxxFrameHandler`, thunks) the same call flow type, and
+    what follows those is padding or the next function."""
+    ft = ins.getFallThrough()
+    if ft is None and ins.getFlowType().isCall() and ins.getMnemonicString().upper() == 'CALL':
+        ft = ins.getAddress().add(ins.getLength())
+    return ft
+
+
+def force_disassemble(program, addr):
+    """Flow reaches these bytes, so they are code: a mis-decoded instruction
+    may start inside the real one, or Ghidra typed them as data (a lone
+    shared `ret`); clear and disassemble. Returns the instruction or None."""
+    listing, memory = program.getListing(), program.getMemory()
+    block = memory.getBlock(addr)
+    if block is None or not block.isExecute():
+        return None
+    data = listing.getDefinedDataContaining(addr)
+    if data is not None:
+        listing.clearCodeUnits(data.getMinAddress(), data.getMaxAddress(), False)
+    else:
+        listing.clearCodeUnits(addr, addr.add(15), False)
+    DisassembleCommand(addr, None, True).applyTo(program, TaskMonitor.DUMMY)
+    return listing.getInstructionAt(addr)
+
+
 class FunctionTranslator:
     def __init__(self, program, func, known):
         self.program = program
@@ -91,6 +128,11 @@ class FunctionTranslator:
         self.uniq_size = 0
         self.needs_dispatch = False  # function has computed jumps: emit one shared switch
         self.resumable = False       # can be entered mid-body (SEH/C++ EH continuations, setjmp)
+        self.disassembled = []       # addresses this walk disassembled on demand
+        self.cache = {}              # cached register class -> set of slots (see plan_cache)
+        self.pending_reload = []     # registers spilled for one op that took their address
+        self.ulocal = {}             # unique offset -> (C local, size) for int-sized temporaries
+        self.pending_ureload = []    # such temporaries written to U for one op that took their address
 
     # ---- varnodes -------------------------------------------------------
     def space(self, v):
@@ -100,13 +142,99 @@ class FunctionTranslator:
         off, size = v.getOffset(), v.getSize()
         return self.ublock[off]
 
+    def uloc(self, v):
+        """The C local of an int-sized temporary, or None."""
+        if not v.isUnique():
+            return None
+        u = self.ulocal.get(v.getOffset())
+        return u[0] if u and u[1] == v.getSize() else None
+
+    # ---- registers kept in C locals -------------------------------------
+    def plan_cache(self):
+        """Which registers this function keeps in locals: the general registers
+        (g0..g7 for EAX..EDI, with their 8/16-bit parts), the flag bytes
+        (f200..) and the x87 stack slots (s0..s7), each class only when every
+        access in the function fits it."""
+        regs = []
+        for ins in self.insns:
+            for op in ins.getPcode():
+                for v in list(op.getInputs()) + ([op.getOutput()] if op.getOutput() else []):
+                    if v.isRegister():
+                        regs.append((v.getOffset(), v.getSize()))
+        gpr = {o // 4 for o, n in regs if o < 0x20}
+        if gpr and all(o % 4 + n <= 4 for o, n in regs if o < 0x20):
+            self.cache['gpr'] = gpr
+        flags = {o for o, n in regs if 0x200 <= o < 0x220}
+        if flags and all(n == 1 for o, n in regs if 0x200 <= o < 0x220):
+            self.cache['flag'] = flags
+        st = {(o - 0x1100) // 16 for o, n in regs if 0x1100 <= o < 0x1180}
+        if st and all(n == 10 and o % 16 == 0 for o, n in regs if 0x1100 <= o < 0x1180):
+            self.cache['st'] = st
+
+    def cached(self, v):
+        if not v.isRegister():
+            return None
+        off = v.getOffset()
+        if off < 0x20 and off // 4 in self.cache.get('gpr', ()):
+            return ('gpr', off // 4, off % 4)
+        if off in self.cache.get('flag', ()):
+            return ('flag', off, 0)
+        if 0x1100 <= off < 0x1180 and (off - 0x1100) // 16 in self.cache.get('st', ()):
+            return ('st', (off - 0x1100) // 16, 0)
+        return None
+
+    def spill_lines(self, which=None):
+        out = []
+        for i in sorted(self.cache.get('gpr', ())):
+            if which is None or ('gpr', i) in which:
+                out.append(f'WR32((ctx->r + 0x{4 * i:x}), g{i});')
+        for o in sorted(self.cache.get('flag', ())):
+            if which is None or ('flag', o) in which:
+                out.append(f'WR8((ctx->r + 0x{o:x}), f{o:x});')
+        for i in sorted(self.cache.get('st', ())):
+            if which is None or ('st', i) in which:
+                out.append(f'WRF80SLOT((ctx->r + 0x{0x1100 + 16 * i:x}), s{i});')
+        return out
+
+    def reload_lines(self, which=None):
+        out = []
+        for i in sorted(self.cache.get('gpr', ())):
+            if which is None or ('gpr', i) in which:
+                out.append(f'g{i} = RD32((ctx->r + 0x{4 * i:x}));')
+        for o in sorted(self.cache.get('flag', ())):
+            if which is None or ('flag', o) in which:
+                out.append(f'f{o:x} = RD8((ctx->r + 0x{o:x}));')
+        for i in sorted(self.cache.get('st', ())):
+            if which is None or ('st', i) in which:
+                out.append(f's{i} = RDF64((ctx->r + 0x{0x1100 + 16 * i:x}));')
+        return out
+
+    def spill(self):
+        return ' '.join(self.spill_lines())
+
+    def reload(self):
+        return ' '.join(self.reload_lines())
+
     def ptr(self, v):
         sp, off = self.space(v), v.getOffset()
         if sp == 'register':
             if off == FS_OFFSET:
                 self.features['fs'] += 1
+            c = self.cached(v)
+            if c is not None:
+                # an op that needs the register's address: write the local
+                # back for it and read it again after it (see translate)
+                key = (c[0], c[1])
+                for line in self.spill_lines({key}):
+                    self.emit(line)
+                self.pending_reload.append(key)
             return f'(ctx->r + 0x{off:x})'
         if sp == 'unique':
+            name = self.uloc(v)
+            if name:
+                n = v.getSize()
+                self.emit(f'WR{n * 8}((U + {self.map_unique(v)}), {name});')
+                self.pending_ureload.append(v)
             return f'(U + {self.map_unique(v)})'
         if sp == 'ram':
             return f'MEM(0x{off:08x}u)'
@@ -114,6 +242,14 @@ class FunctionTranslator:
 
     def rd(self, v):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'gpr':
+            return f'g{c[1]}' if size == 4 else f'(({ut(size)})(g{c[1]} >> {8 * c[2]}))'
+        if c is not None and c[0] == 'flag':
+            return f'f{c[1]:x}'
+        name = self.uloc(v)
+        if name:
+            return name
         if self.space(v) == 'const':
             val = v.getOffset() & ((1 << (8 * size)) - 1) if size <= 8 else v.getOffset()
             return f'(({ut(size)})0x{val:x}ull)' if size in INT_SIZES else self.unsup(f'const size {size}')
@@ -125,6 +261,21 @@ class FunctionTranslator:
 
     def wr(self, v, expr):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'gpr':
+            if size == 4:
+                self.emit(f'g{c[1]} = (uint32_t)({expr});')
+            else:
+                mask = ((1 << (8 * size)) - 1) << (8 * c[2])
+                self.emit(f'g{c[1]} = (g{c[1]} & 0x{~mask & 0xFFFFFFFF:x}u) | ((uint32_t)({ut(size)})({expr}) << {8 * c[2]});')
+            return
+        if c is not None and c[0] == 'flag':
+            self.emit(f'f{c[1]:x} = (uint8_t)({expr});')
+            return
+        name = self.uloc(v)
+        if name:
+            self.emit(f'{name} = ({ut(size)})({expr});')
+            return
         if size == 10:
             self.emit(f'WR64({self.ptr(v)}, (uint64_t)({expr}));')
             return
@@ -134,6 +285,12 @@ class FunctionTranslator:
 
     def rdf(self, v):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'st':
+            return f's{c[1]}'
+        name = self.uloc(v)
+        if name and size in (4, 8):
+            return f'bits_f{size * 8}({name})'
         if self.space(v) == 'const':
             bits = v.getOffset()
             return {4: f'bits_f32(0x{bits:x}u)', 8: f'bits_f64(0x{bits:x}ull)'}.get(size) or self.unsup('fconst')
@@ -145,6 +302,14 @@ class FunctionTranslator:
 
     def wrf(self, v, expr):
         size = v.getSize()
+        c = self.cached(v)
+        if c is not None and c[0] == 'st':
+            self.emit(f's{c[1]} = (double)({expr});')
+            return
+        name = self.uloc(v)
+        if name and size in (4, 8):
+            self.emit(f'{name} = f{size * 8}_bits(({"float" if size == 4 else "double"})({expr}));')
+            return
         if size == 4:
             self.emit(f'WRF32({self.ptr(v)}, (float)({expr}));')
         elif size == 8:
@@ -179,14 +344,18 @@ class FunctionTranslator:
             self.labels_used.add(f'L_{addr:08x}')
             return f'goto L_{addr:08x};'
         self.features['tailjump'] += 1
-        return f'{{ {self.call_expr(addr)} return; }}'
+        return f'{{ {self.spill()} {self.call_only(addr)} return; }}'
 
-    def call_expr(self, addr):
+    def call_only(self, addr):
         # RECOMP_TRACE_CALLS=2 logs direct calls too (see rt_trace_call)
         pre = f'if (g_trace_calls > 1) rt_trace_call(ctx, 0x{addr:08x}u); '
         if addr in self.known:
             return f'{pre}f_{addr:08x}(ctx);'
         return f'rt_call(ctx, 0x{addr:08x}u);'
+
+    def call_expr(self, addr):
+        """A call: the callee sees and changes the registers in ctx."""
+        return f'{{ {self.spill()} {self.call_only(addr)} {self.reload()} }}'
 
     # ---- translation ----------------------------------------------------
     def collect_uniques(self):
@@ -210,6 +379,18 @@ class FunctionTranslator:
             starts[lo] = (compact, hi)
             compact += (hi - lo + 7) & ~7
         self.uniq_size = max(compact, 8)
+        # a temporary that is the only varnode in its block and of an integer
+        # size becomes a C local (it still has its place in U for ops that
+        # need its address)
+        ids = collections.defaultdict(set)
+        for lo, hi in spans:
+            ids[lo].add(hi - lo)
+        for lo, hi in merged:
+            sizes = ids.get(lo, set())
+            if len(sizes) == 1 and next(iter(sizes)) == hi - lo and hi - lo in INT_SIZES:
+                inner = [o for o in ids if lo < o < hi]
+                if not inner:
+                    self.ulocal[lo] = (f'u{starts[lo][0]}', hi - lo)
         # map every unique offset used to its compact position
         mlist = [(lo, starts[lo][0], starts[lo][1]) for lo, _ in merged]
         import bisect
@@ -233,23 +414,13 @@ class FunctionTranslator:
 
         def ins_at(addr):
             # flow can land on bytes Ghidra never disassembled; do it now (the
-            # project is a scratch copy opened for writing and never saved)
+            # project is a scratch copy)
             ins = listing.getInstructionAt(addr)
             if ins is None:
-                block = memory.getBlock(addr)
-                if block is not None and block.isExecute():
-                    # flow reaches these bytes, so they are code: a mis-decoded
-                    # instruction may start inside the real one, or Ghidra typed
-                    # them as data (a lone shared `ret`); clear and disassemble
-                    data = listing.getDefinedDataContaining(addr)
-                    if data is not None:
-                        listing.clearCodeUnits(data.getMinAddress(), data.getMaxAddress(), False)
-                    else:
-                        listing.clearCodeUnits(addr, addr.add(15), False)
-                    DisassembleCommand(addr, None, True).applyTo(self.program, TaskMonitor.DUMMY)
-                    ins = listing.getInstructionAt(addr)
-                    if ins is not None:
-                        self.features['redisassembled'] += 1
+                ins = force_disassemble(self.program, addr)
+                if ins is not None:
+                    self.features['redisassembled'] += 1
+                    self.disassembled.append(addr.getOffset())
             return ins
 
         start = ins_at(self.space_.getAddress(self.entry))
@@ -269,7 +440,7 @@ class FunctionTranslator:
                 continue
             seen.add(a)
             order.append(ins)
-            ft = ins.getFallThrough()
+            ft = fall_through(ins)
             if ft is not None:
                 nxt = ins_at(ft)
                 if nxt is not None:
@@ -379,6 +550,7 @@ class FunctionTranslator:
         if self.resumable:
             self.needs_dispatch = True
         self.collect_uniques()
+        self.plan_cache()
         for idx, ins in enumerate(self.insns):
             a = ins.getAddress().getOffset()
             self.lines.append(f'L_{a:08x}: /* {ins} */')
@@ -391,6 +563,13 @@ class FunctionTranslator:
                 if i in rel_targets:
                     self.lines.append(f'L_{a:08x}_{i}:;')
                 self.op(ins, a, i, op, ops)
+                if self.pending_reload:
+                    for line in self.reload_lines(set(self.pending_reload)):
+                        self.emit(line)
+                    self.pending_reload = []
+                for v in self.pending_ureload:
+                    self.emit(f'{self.uloc(v)} = RD{v.getSize() * 8}((U + {self.map_unique(v)}));')
+                self.pending_ureload = []
             if len(ops) in rel_targets:
                 self.lines.append(f'L_{a:08x}_{len(ops)}:;')
             if ins.getMnemonicString().upper() in ('FPREM', 'FPREM1'):
@@ -399,7 +578,7 @@ class FunctionTranslator:
                 sw = self.program.getRegister('FPUStatusWord').getOffset()
                 self.emit(f'WR16((ctx->r + 0x{sw:x}), (uint16_t)(RD16((ctx->r + 0x{sw:x})) & 0xfbff)); /* C2 = 0 */')
             # explicit fall-through when the next emitted instruction is not the next in memory
-            ft = ins.getFallThrough()
+            ft = fall_through(ins)
             if ft is not None:
                 nxt = self.insns[idx + 1].getAddress().getOffset() if idx + 1 < len(self.insns) else None
                 if ft.getOffset() != nxt:
@@ -424,6 +603,8 @@ class FunctionTranslator:
         if m == 'COPY':
             if o.getSize() in INT_SIZES:
                 self.wr(o, self.rd(ins_[0]))
+            elif o.getSize() == 10 and (self.cached(o) or self.cached(ins_[0])) and self.space(ins_[0]) != 'const':
+                self.wrf(o, self.rdf(ins_[0]))  # the x87 stack moving: values, not bytes
             else:
                 self.emit(f'memcpy({self.ptr(o)}, {self.ptr(ins_[0])}, {o.getSize()});')
         elif m == 'LOAD':
@@ -432,7 +613,7 @@ class FunctionTranslator:
             if n in INT_SIZES:
                 self.wr(o, f'RD{n * 8}(MEM({addr}))')
             elif n == 10:
-                self.emit(f'WRF80SLOT({self.ptr(o)}, f80_to_f64(MEM({addr})));')
+                self.wrf(o, f'f80_to_f64(MEM({addr}))')
             else:
                 self.emit(f'memcpy({self.ptr(o)}, MEM({addr}), {n});')
         elif m == 'STORE':
@@ -468,11 +649,11 @@ class FunctionTranslator:
             self.emit(self.call_expr(ins_[0].getOffset()))
         elif m == 'CALLIND':
             self.features['callind'] += 1
-            self.emit(f'rt_call(ctx, {self.rd(ins_[0])});')
+            self.emit(f'{{ uint32_t t_call = {self.rd(ins_[0])}; {self.spill()} rt_call(ctx, t_call); {self.reload()} }}')
         elif m == 'RETURN':
             # the return address lets rt_resume continue the caller after a
             # function that was entered mid-body (exception continuation) returns
-            self.emit(f'ctx->ret_ip = {self.rd(ins_[0])}; return;')
+            self.emit(f'{{ uint32_t t_ret = {self.rd(ins_[0])}; {self.spill()} ctx->ret_ip = t_ret; return; }}')
         elif m == 'CALLOTHER':
             self.userop(a, op, o, ins_)
         elif m in BINOP:
@@ -490,6 +671,8 @@ class FunctionTranslator:
             self.wr(o, f'{self.signed(ins_[0])} {CMP_S[m]} {self.signed(ins_[1])}')
         elif m in ('INT_DIV', 'INT_REM', 'INT_SDIV', 'INT_SREM'):
             n = o.getSize()
+            for line in self.spill_lines():  # a divide error traps with the registers in ctx
+                self.emit(line)
             fn = {'INT_DIV': 'udiv', 'INT_REM': 'urem', 'INT_SDIV': 'sdiv', 'INT_SREM': 'srem'}[m]
             self.wr(o, f'rt_{fn}{n * 8}(ctx, {self.rd(ins_[0])}, {self.rd(ins_[1])})')
         elif m == 'INT_NEGATE':
@@ -556,7 +739,13 @@ class FunctionTranslator:
         elif m == 'TRUNC':
             self.wr(o, f'f2i{min(o.getSize(), 8) * 8}({self.rdf(ins_[0])})')
         elif m == 'ROUND':
-            self.wrf(o, f'nearbyint({self.rdf(ins_[0])})')
+            # in the guest's rounding mode: the x87 control word or MXCSR
+            mn = ins.getMnemonicString().upper()
+            mode = 'X87' if mn.startswith('F') else 'SSE' if mn.startswith('CVT') else None
+            if mode:
+                self.wrf(o, f'RT_ROUND_{mode}(ctx, {self.rdf(ins_[0])})')
+            else:
+                self.wrf(o, f'nearbyint({self.rdf(ins_[0])})')
         elif m == 'FLOAT_FLOOR':
             self.wrf(o, f'floor({self.rdf(ins_[0])})')
         elif m == 'FLOAT_CEIL':
@@ -574,7 +763,7 @@ class FunctionTranslator:
             fargs = ', '.join(self.rdf(x) for x in args)
             self.wrf(o, f'{USEROPS_FLOAT[name]}({fargs})')
         elif name == 'swi':
-            self.emit(f'rt_interrupt(ctx, 0x{a:08x}u, {self.rd(args[0])});')
+            self.emit(f'{{ uint32_t t_int = {self.rd(args[0])}; {self.spill()} rt_interrupt(ctx, 0x{a:08x}u, t_int); {self.reload()} }}')
         elif name == 'rdtsc' and o is not None:
             self.wr(o, 'rt_rdtsc(ctx)')
         elif name in USEROPS_PACKED and o is not None:
@@ -590,7 +779,7 @@ class FunctionTranslator:
             # anything else has no host equivalent (privileged instructions,
             # or padding decoded as code): trap if it is ever reached
             self.features['userop_trap_' + name] += 1
-            self.emit(f'rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
+            self.emit(f'{self.spill()} rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u); return;')
 
     def render(self):
         # instructions are emitted in address order, and a function body can
@@ -598,6 +787,14 @@ class FunctionTranslator:
         # so always start by jumping to the entry
         out = [f'void f_{self.entry:08x}(Ctx *ctx) {{ /* {self.func.getName(True)} */',
                f'    uint8_t U[{self.uniq_size}];']
+        for name, n in sorted(set(self.ulocal.values())):
+            out.append(f'    {ut(n)} {name} = 0;')
+        for i in sorted(self.cache.get('gpr', ())):
+            out.append(f'    uint32_t g{i} = RD32((ctx->r + 0x{4 * i:x}));')
+        for o in sorted(self.cache.get('flag', ())):
+            out.append(f'    uint8_t f{o:x} = RD8((ctx->r + 0x{o:x}));')
+        for i in sorted(self.cache.get('st', ())):
+            out.append(f'    double s{i} = RDF64((ctx->r + 0x{0x1100 + 16 * i:x}));')
         if self.needs_dispatch:
             out.append('    uint32_t t_dispatch;')
             # every instruction is a possible target of a computed jump whose
@@ -610,7 +807,7 @@ class FunctionTranslator:
         if self.entry in self.insn_addrs:
             out.append(f'    goto L_{self.entry:08x};')
         else:  # Ghidra has no instruction at the entry (a stray 1-byte function)
-            out.append(f'    rt_trap(ctx, TRAP_MISSING_FUNCTION, 0x{self.entry:08x}u);')
+            out.append(f'    {self.spill()} rt_trap(ctx, TRAP_MISSING_FUNCTION, 0x{self.entry:08x}u);')
         for line in self.lines:
             if line.endswith(':;') and line.split(':')[0] not in self.labels_used:
                 continue
@@ -625,7 +822,7 @@ class FunctionTranslator:
             out.append('    switch (t_dispatch) {')
             for t in sorted(self.insn_addrs):
                 out.append(f'    case 0x{t:08x}u: goto L_{t:08x};')
-            out.append('    default: rt_jump(ctx, t_dispatch); return;')
+            out.append(f'    default: {self.spill()} rt_jump(ctx, t_dispatch); return;')
             out.append('    }')
         out.append('}')
         return '\n'.join(out)
@@ -655,7 +852,8 @@ def load_hooks(path):
     return hooks
 
 
-def main(project_dir, out_dir, select='leaf', hooks_path=None):
+def main(project_dir, out_dir, select='leaf', hooks_path=None, jobs='1'):
+    jobs = int(jobs)
     hooks = load_hooks(hooks_path)
     load_resumable()
     project = GhidraProject.openProject(project_dir, 'obiwan', False)
@@ -750,43 +948,50 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     if created:
         print(f'created {created} functions for direct-call targets', file=sys.stderr)
 
-    funcs = [f for f in fm.getFunctions(True)
-             if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
+    def all_funcs():
+        return sorted(f.getEntryPoint().getOffset() for f in fm.getFunctions(True)
+                      if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute())
 
     explicit = None
     if select not in ('leaf', 'all', 'text'):
         explicit = {int(x, 16) for x in open(select).read().split()}
 
+    def save_master(tx):
+        """Commit the scratch copy so worker processes can open copies of it."""
+        program.endTransaction(tx, True)
+        project.save(program)
+        return program.startTransaction('translate (scratch)')
+
     # First pass: translate everything (with an empty `known` set) to gather
     # coverage and features, then emit the selected set. Translating
     # disassembles code on demand, which can expose calls to functions that
     # did not exist yet, so repeat the closure and the pass until it settles.
-    meta, ok = {}, {}
+    # With jobs > 1 the passes run in worker processes on copies of the
+    # project; the master mirrors their on-demand disassembly so its listing
+    # (and the next round's copies) match what they saw.
+    meta, ok = {}, set()
+    addrs = all_funcs()
     for _round in range(5):
-        # every function is walked again each round: a walk can grow once code
-        # it reaches has been disassembled, and the emission pass must see the
-        # same listing this pass saw
-        meta, ok = {}, {}
-        for f in funcs:
-            a = f.getEntryPoint().getOffset()
-            t = FunctionTranslator(program, f, set())
-            try:
-                code = t.translate()
-                status = 'ok'
-            except Unsupported as e:
-                code, status = None, f'unsupported: {e}'
-            except Exception as e:  # noqa: BLE001 - keep going and report
-                code, status = None, f'error: {e}'
-            meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
-                       'features': dict(t.features)}
-            if code is not None:
-                ok[a] = f
+        meta, ok, disassembled = {}, set(), set()
+        if jobs > 1:
+            tx = save_master(tx)
+            shards = [addrs[i::jobs] for i in range(jobs)]
+            for r in run_workers(project_dir, [{'mode': 'survey', 'addrs': sh} for sh in shards]):
+                meta.update({int(k): v for k, v in r['meta'].items()})
+                ok.update(r['ok'])
+                disassembled.update(r['disassembled'])
+            for a in sorted(disassembled):
+                if listing.getInstructionAt(space.getAddress(a)) is None:
+                    force_disassemble(program, space.getAddress(a))
+        else:
+            m, o, d = survey(program, addrs)
+            meta.update(m)
+            ok.update(o)
         more = call_target_closure()
         if not more:
             break
         print(f'round {_round + 1}: {more} more functions found by disassembling on demand', file=sys.stderr)
-        funcs = [f for f in fm.getFunctions(True)
-                 if not f.isExternal() and memory.getBlock(f.getEntryPoint()).isExecute()]
+        addrs = all_funcs()
 
     def is_leaf(a):
         ft = meta[a]['features']
@@ -807,34 +1012,31 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     for a, name in hooks.items():
         meta.setdefault(a, {'name': name, 'status': 'hook', 'block': '', 'features': {}})
 
-    extent = {}  # address -> (first, last instruction address, resumable)
     os.makedirs(out_dir, exist_ok=True)
     for old in os.listdir(out_dir):
         if old.startswith('funcs_') and old.endswith('.c'):
             os.remove(os.path.join(out_dir, old))
-    for n in range(0, len(chosen), FUNCS_PER_FILE):
-        part = chosen[n:n + FUNCS_PER_FILE]
-        with open(os.path.join(out_dir, f'funcs_{n // FUNCS_PER_FILE:04d}.c'), 'w') as out:
-            out.write('/* Generated by recomp/translator/pcode2c.py from the game executable. Do not commit. */\n')
-            out.write('#include "guest.h"\n#include "funcs.h"\n\n')
-            for a in part:
-                if a in hooks:
-                    # the host runtime provides this one; keep the symbol so direct calls link
-                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
-                    extent[a] = (a, a, False)
-                    continue
-                try:
-                    t = FunctionTranslator(program, ok[a], known)
-                    code = t.translate()
-                    extent[a] = (min(t.insn_addrs), max(t.insn_addrs), t.resumable)
-                    meta[a]['resumable'] = t.resumable
-                except Exception as e:  # noqa: BLE001 - keep the build consistent
-                    extent[a] = (a, a, False)
-                    print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
-                    meta[a]['status'] = f'emit failed: {e}'
-                    code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {meta[a]["name"]}: {e} */' + '\n'
-                            + f'    rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u);' + '\n}')
-                out.write(code + '\n\n')
+    chunks = [(n // FUNCS_PER_FILE, chosen[n:n + FUNCS_PER_FILE]) for n in range(0, len(chosen), FUNCS_PER_FILE)]
+    names = {a: meta[a]['name'] for a in chosen}
+    extent = {}  # address -> (first, last instruction address, resumable)
+    if jobs > 1:
+        tx = save_master(tx)
+        job_chunks = [chunks[i::jobs] for i in range(jobs)]
+        job = {'mode': 'emit', 'known': sorted(known), 'hooks': {str(a): n for a, n in hooks.items()},
+               'names': {str(a): n for a, n in names.items()}, 'out_dir': out_dir}
+        for r in run_workers(project_dir, [dict(job, chunks=jc) for jc in job_chunks]):
+            extent.update({int(k): tuple(v) for k, v in r['extent'].items()})
+            for k, st in r['status'].items():
+                meta[int(k)]['status'] = st
+            for k, res in r['resumable'].items():
+                meta[int(k)]['resumable'] = res
+    else:
+        r = emit(program, chunks, known, hooks, names, out_dir)
+        extent.update({int(k): tuple(v) for k, v in r['extent'].items()})
+        for k, st in r['status'].items():
+            meta[int(k)]['status'] = st
+        for k, res in r['resumable'].items():
+            meta[int(k)]['resumable'] = res
 
     def purge_bytes(f):
         """Bytes a function pops on return (stdcall `ret n`), or 0; None if it has no function.
@@ -868,7 +1070,7 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
             out.write(f'void f_{a:08x}(Ctx *ctx);\n')
         for a, name in sorted(hooks.items()):
             out.write(f'void hook_{name}(Ctx *ctx); /* 0x{a:08x} */\n')
-            pb = purge_bytes(ok.get(a))
+            pb = purge_bytes(fm.getFunctionAt(space.getAddress(a)) if a in ok else None)
             if pb is not None:
                 out.write(f'#define HOOKARGS_{name} {pb // 4} /* stdcall arguments popped by the original */\n')
     with open(os.path.join(out_dir, 'functab.c'), 'w') as out:
@@ -887,5 +1089,107 @@ def main(project_dir, out_dir, select='leaf', hooks_path=None):
     project.close()
 
 
+def survey(program, addrs):
+    """Translate every function in addrs with no callees known: its status and
+    features, plus the addresses the walks disassembled on demand."""
+    fm, memory = program.getFunctionManager(), program.getMemory()
+    space = program.getAddressFactory().getDefaultAddressSpace()
+    meta, ok, disassembled = {}, [], []
+    for a in addrs:
+        f = fm.getFunctionAt(space.getAddress(a))
+        if f is None:
+            continue
+        t = FunctionTranslator(program, f, set())
+        try:
+            t.translate()
+            status = 'ok'
+        except Unsupported as e:
+            status = f'unsupported: {e}'
+        except Exception as e:  # noqa: BLE001 - keep going and report
+            status = f'error: {e}'
+        meta[a] = {'name': f.getName(True), 'status': status, 'block': memory.getBlock(f.getEntryPoint()).getName(),
+                   'features': dict(t.features)}
+        if status == 'ok':
+            ok.append(a)
+        disassembled += t.disassembled
+    return meta, ok, disassembled
+
+
+def emit(program, chunks, known, hooks, names, out_dir):
+    """Write funcs_NNNN.c for each (file index, addresses) chunk."""
+    fm = program.getFunctionManager()
+    space = program.getAddressFactory().getDefaultAddressSpace()
+    extent, status, resumable = {}, {}, {}
+    for index, part in chunks:
+        with open(os.path.join(out_dir, f'funcs_{index:04d}.c'), 'w') as out:
+            out.write('/* Generated by recomp/translator/pcode2c.py from the game executable. Do not commit. */\n')
+            out.write('#include "guest.h"\n#include "funcs.h"\n\n')
+            for a in part:
+                if a in hooks:
+                    # the host runtime provides this one; keep the symbol so direct calls link
+                    out.write(f'void f_{a:08x}(Ctx *ctx) {{ hook_{hooks[a]}(ctx); }}' + '\n\n')
+                    extent[a] = (a, a, False)
+                    continue
+                try:
+                    t = FunctionTranslator(program, fm.getFunctionAt(space.getAddress(a)), known)
+                    code = t.translate()
+                    extent[a] = (min(t.insn_addrs), max(t.insn_addrs), t.resumable)
+                    resumable[a] = t.resumable
+                except Exception as e:  # noqa: BLE001 - keep the build consistent
+                    extent[a] = (a, a, False)
+                    print(f'emit failed for {a:08x}: {e}', file=sys.stderr)
+                    status[a] = f'emit failed: {e}'
+                    code = (f'void f_{a:08x}(Ctx *ctx) {{ /* {names[a]}: {e} */' + '\n'
+                            + f'    rt_trap(ctx, TRAP_UNSUPPORTED, 0x{a:08x}u);' + '\n}')
+                out.write(code + '\n\n')
+    return {'extent': {str(a): list(v) for a, v in extent.items()}, 'status': {str(a): v for a, v in status.items()},
+            'resumable': {str(a): v for a, v in resumable.items()}}
+
+
+def run_workers(project_dir, jobs):
+    """Run one worker process per job on its own copy of the (saved) project;
+    returns their result dicts in order."""
+    procs = []
+    for i, job in enumerate(jobs):
+        wdir = f'{project_dir.rstrip("/")}_w{i}'
+        shutil.rmtree(wdir, ignore_errors=True)
+        shutil.copytree(project_dir, wdir)
+        for lock in set(glob.glob(os.path.join(wdir, '**', '*.lock*'), recursive=True)):
+            os.remove(lock)
+        job_path, res_path = wdir + '.job.json', wdir + '.result.json'
+        json.dump(job, open(job_path, 'w'))
+        if os.path.exists(res_path):
+            os.remove(res_path)
+        procs.append((subprocess.Popen([sys.executable, os.path.abspath(__file__), '--worker', wdir, job_path, res_path]), res_path, wdir))
+    results = []
+    for proc, res_path, wdir in procs:
+        if proc.wait() != 0 or not os.path.exists(res_path):
+            raise RuntimeError(f'worker {wdir} failed')
+        results.append(json.load(open(res_path)))
+        shutil.rmtree(wdir, ignore_errors=True)
+    return results
+
+
+def worker(copy_dir, job_path, res_path):
+    job = json.load(open(job_path))
+    load_resumable()
+    project = GhidraProject.openProject(copy_dir, 'obiwan', False)
+    program = project.openProgram('/', PROGRAM, False)
+    tx = program.startTransaction('worker (scratch, never saved)')
+    if job['mode'] == 'survey':
+        meta, ok, disassembled = survey(program, job['addrs'])
+        result = {'meta': {str(a): m for a, m in meta.items()}, 'ok': ok, 'disassembled': disassembled}
+    else:
+        result = emit(program, [(i, part) for i, part in job['chunks']], set(job['known']),
+                      {int(k): v for k, v in job['hooks'].items()}, {int(k): v for k, v in job['names'].items()},
+                      job['out_dir'])
+    program.endTransaction(tx, False)
+    project.close()
+    json.dump(result, open(res_path, 'w'))
+
+
 if __name__ == '__main__':
-    main(*sys.argv[1:])
+    if sys.argv[1:2] == ['--worker']:
+        worker(*sys.argv[2:5])
+    else:
+        main(*sys.argv[1:])

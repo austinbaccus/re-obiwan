@@ -364,15 +364,37 @@ static void ensure_dir(const char *path) {
 
 /* ---- time --------------------------------------------------------------- */
 static uint64_t qpc_freq;
+/* RECOMP_FIXEDFPS=n: the guest's clocks show a virtual time that advances
+   1/n s per present, so the game's animation is the same at a given frame
+   whatever the host's speed (comparing renderers, repeating captures).
+   While nothing is presented for a tenth of a second (loading, which waits
+   on the clock), it follows the host's time instead. */
+static volatile LONG64 g_vclock = -1;  /* 100 ns units since boot, -1 for the host clock */
+static volatile LONG64 g_vhost_last;   /* host time of the last advance */
+static uint64_t g_vstep, g_vbase_system, g_vbase_tick;
+static uint64_t host_time(void) {
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (uint64_t)((double)c.QuadPart * 1e7 / (double)qpc_freq);
+}
+static uint64_t vclock(void) {
+    LONG64 now = (LONG64)host_time(), last = g_vhost_last;
+    if (now - last > 1000000 && InterlockedCompareExchange64(&g_vhost_last, now, last) == last)
+        InterlockedExchangeAdd64(&g_vclock, now - last);
+    return (uint64_t)g_vclock;
+}
 static uint64_t system_time(void) {
+    if (g_vclock >= 0) return g_vbase_system + vclock();
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
     return ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 }
-static uint64_t interrupt_time(void) {
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    return (uint64_t)((double)c.QuadPart * 1e7 / (double)qpc_freq);
+static uint64_t interrupt_time(void) { return g_vclock >= 0 ? vclock() : host_time(); }
+static uint32_t tick_count(void) { return g_vclock >= 0 ? (uint32_t)(g_vbase_tick + vclock() / 10000) : GetTickCount(); }
+void kernel_frame_presented(void) {
+    if (g_vclock < 0) return;
+    InterlockedExchangeAdd64(&g_vclock, (LONG64)g_vstep);
+    InterlockedExchange64(&g_vhost_last, (LONG64)host_time());
 }
 
 /* ---- threads ------------------------------------------------------------- */
@@ -436,6 +458,10 @@ void kernel_each_thread(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, vo
     int busy = 0;
     for (int i = 0; i < POOL_SIZE; i++) busy += g_pool[i].busy != 0;
     fprintf(stderr, "  (%d pooled host threads busy)\n", busy);
+    kernel_threads(fn, arg);
+}
+
+void kernel_threads(void (*fn)(HANDLE thread, Ctx *ctx, const char *what, void *arg), void *arg) {
     if (g_main_thread.ctx) fn(g_main_thread.thread, g_main_thread.ctx, g_main_thread.name, arg);
     for (int i = 0; i < POOL_SIZE; i++)
         if (g_pool[i].busy) fn(g_pool[i].thread, g_pool[i].ctx, g_pool[i].name, arg);
@@ -635,21 +661,30 @@ K(RtlCompareMemoryUlong) {
     RET(n, 3);
 }
 /* RTL_CRITICAL_SECTION on Xbox is 0x1C bytes; we store a host CS pointer in it */
-K(RtlInitializeCriticalSection) {
-    uint32_t cs = ARG(ctx, 0);
-    CRITICAL_SECTION *h = malloc(sizeof *h);
-    InitializeCriticalSection(h);
-    WR32(MEM(cs + 0x10), (uint32_t)(uintptr_t)h);
-    WR32(MEM(cs + 0x14), 0x4353); /* marker */
-    RET(0, 1);
-}
-static CRITICAL_SECTION *cs_of(uint32_t cs) {
-    if (RD32(MEM(cs + 0x14)) != 0x4353) { /* used before initialization: init lazily */
+/* A guest RTL_CRITICAL_SECTION carries a host CRITICAL_SECTION pointer at
+   +0x10 and a marker at +0x14. Creating it (explicitly or lazily, for
+   sections the game initialises statically) is serialised: two threads
+   creating their own host sections for one guest section would both get
+   in at once. */
+static SRWLOCK g_cs_create = SRWLOCK_INIT;
+static CRITICAL_SECTION *cs_create(uint32_t cs) {
+    AcquireSRWLockExclusive(&g_cs_create);
+    if (RD32(MEM(cs + 0x14)) != 0x4353) {
         CRITICAL_SECTION *h = malloc(sizeof *h);
         InitializeCriticalSection(h);
         WR32(MEM(cs + 0x10), (uint32_t)(uintptr_t)h);
+        MemoryBarrier();
         WR32(MEM(cs + 0x14), 0x4353);
     }
+    ReleaseSRWLockExclusive(&g_cs_create);
+    return (CRITICAL_SECTION *)(uintptr_t)RD32(MEM(cs + 0x10));
+}
+K(RtlInitializeCriticalSection) {
+    cs_create(ARG(ctx, 0)); /* re-initialising a live section keeps its host section */
+    RET(0, 1);
+}
+static CRITICAL_SECTION *cs_of(uint32_t cs) {
+    if (RD32(MEM(cs + 0x14)) != 0x4353) return cs_create(cs); /* used before initialization */
     return (CRITICAL_SECTION *)(uintptr_t)RD32(MEM(cs + 0x10));
 }
 K(RtlEnterCriticalSection) { EnterCriticalSection(cs_of(ARG(ctx, 0))); RET(0, 1); }
@@ -780,7 +815,7 @@ K(KeQueryPerformanceCounter) {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
     /* 64-bit return in EDX:EAX; scaled to the Xbox's 733 MHz counter */
-    uint64_t v = (uint64_t)((double)c.QuadPart * 733333333.0 / (double)qpc_freq);
+    uint64_t v = g_vclock >= 0 ? (uint64_t)((double)vclock() * 73.3333333) : (uint64_t)((double)c.QuadPart * 733333333.0 / (double)qpc_freq);
     WR32(ctx->r + REG_EDX, (uint32_t)(v >> 32));
     RET((uint32_t)v, 0);
 }
@@ -791,7 +826,37 @@ K(KeQueryInterruptTime) {
     WR32(ctx->r + REG_EDX, (uint32_t)(v >> 32));
     RET((uint32_t)v, 0);
 }
+/* User APCs: NtReadFile with an ApcRoutine (ReadFileEx, which the game
+   streams music and speech with) completes at once, but as on the Xbox its
+   routine runs only when the issuing thread next waits alertably; such a
+   wait then returns STATUS_USER_APC without waiting. Each guest thread has
+   its own host thread, so the queue is thread-local. */
+#define STATUS_USER_APC_ 0xC0
+typedef struct { uint32_t routine, context, iosb; } Apc;
+static __declspec(thread) Apc t_apcs[32];
+static __declspec(thread) int t_napcs;
+static void queue_apc(uint32_t routine, uint32_t context, uint32_t iosb) {
+    if (t_napcs < 32) t_apcs[t_napcs++] = (Apc){routine, context, iosb};
+    else fprintf(stderr, "kernel: APC queue full\n");
+}
+/* an alertable wait with APCs queued: pop the wait's arguments, run them
+   (and any they queue) and return STATUS_USER_APC; 0 when there are none */
+static int deliver_apcs(Ctx *ctx, int alertable, int nargs) {
+    if (!alertable || !t_napcs) return 0;
+    RET_STDCALL(ctx, nargs);
+    while (t_napcs) {
+        Apc a = t_apcs[0];
+        memmove(t_apcs, t_apcs + 1, --t_napcs * sizeof *t_apcs);
+        uint32_t args[3] = {a.context, a.iosb, 0};
+        rt_host_call(ctx, a.routine, 3, args); /* (ApcContext, IoStatusBlock, Reserved) */
+    }
+    SET_EAX(ctx, STATUS_USER_APC_);
+    return 1;
+}
+
 K(KeDelayExecutionThread) {
+    /* (WaitMode, Alertable, Interval) */
+    if (deliver_apcs(ctx, ARG(ctx, 1) & 0xff, 3)) return;
     uint32_t pint = ARG(ctx, 2);
     int64_t t = pint ? (int64_t)RD64(MEM(pint)) : 0;
     DWORD ms = t < 0 ? (DWORD)((-t) / 10000) : 0;
@@ -832,6 +897,8 @@ static void ensure_event(uint32_t ev) {
 }
 K(KeSetEvent) { uint32_t ev = ARG(ctx, 0); ensure_event(ev); SetEvent(KOBJ_HOST(ev)); WR32(MEM(ev + 4), 1); RET(0, 3); }
 K(KeWaitForSingleObject) {
+    /* (Object, WaitReason, WaitMode, Alertable, Timeout) */
+    if (deliver_apcs(ctx, ARG(ctx, 3) & 0xff, 5)) return;
     uint32_t obj = ARG(ctx, 0), pint = ARG(ctx, 4);
     int64_t t = pint ? (int64_t)RD64(MEM(pint)) : 0;
     DWORD ms = pint ? (t < 0 ? (DWORD)((-t) / 10000) : 0) : INFINITE;
@@ -1040,6 +1107,7 @@ static void nt_open(Ctx *ctx, int create, int nargs) {
         }
     }
     trace("%s %s -> host %s : %08x handle %x", create ? "NtCreateFile" : "NtOpenFile", name, path, st, h);
+    if ((int32_t)st < 0 && getenv("RECOMP_FILELOG")) fprintf(stderr, "file: %s %s -> %s failed %08x\n", create ? "create" : "open", name, path, st);
     if (phandle) WR32(MEM(phandle), h);
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), info); }
     RET(st, nargs);
@@ -1076,6 +1144,8 @@ K(NtReadFile) {
     trace("  read %s: %u bytes at %lld -> %lu (buf %08x, offset arg %s)", o->path, len, before.QuadPart, got, buf,
           poff ? ((int64_t)RD64(MEM(poff)) < 0 ? "current" : "explicit") : "none");
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), got); }
+    /* ReadFileEx: the completion routine runs at the thread's next alertable wait */
+    if (ARG(ctx, 2) && st == STATUS_SUCCESS_) queue_apc(ARG(ctx, 2), ARG(ctx, 3), iosb);
     RET(st, 8);
 }
 K(NtWriteFile) {
@@ -1280,6 +1350,8 @@ K(NtSetEvent) {
     RET(STATUS_SUCCESS_, 2);
 }
 K(NtWaitForSingleObject) {
+    /* (Handle, Alertable, Timeout) */
+    if (deliver_apcs(ctx, ARG(ctx, 1) & 0xff, 3)) return;
     Obj *o = handle_get(ARG(ctx, 0));
     uint32_t pint = ARG(ctx, 2);
     if (!o) RET(STATUS_INVALID_HANDLE_, 3);
@@ -1296,7 +1368,17 @@ K(ObReferenceObjectByHandle) {
     RET(STATUS_SUCCESS_, 3);
 }
 K(ObfDereferenceObject) { RET(0, 0); /* fastcall, arg in ECX */ }
-K(NtUserIoApcDispatcher) { RET(0, 3); }
+/* the APC routine XAPI's ReadFileEx/WriteFileEx pass: (ApcContext = the
+   completion routine, IoStatusBlock = the OVERLAPPED, Reserved); calls
+   CompletionRoutine(dwErrorCode, dwNumberOfBytesTransfered, lpOverlapped) */
+K(NtUserIoApcDispatcher) {
+    uint32_t routine = ARG(ctx, 0), iosb = ARG(ctx, 1);
+    uint32_t status = RD32(MEM(iosb)), bytes = RD32(MEM(iosb + 4));
+    uint32_t err = status == 0 ? 0 : status == (uint32_t)STATUS_END_OF_FILE_ ? 38 /* ERROR_HANDLE_EOF */ : 31 /* ERROR_GEN_FAILURE */;
+    RET_STDCALL(ctx, 3);
+    uint32_t args[3] = {err, bytes, iosb};
+    rt_host_call(ctx, routine, 3, args);
+}
 
 /* threads */
 K(PsCreateSystemThreadEx) {
@@ -1370,7 +1452,68 @@ static const KEntry k_table[] = {
 
 static KFn k_by_ordinal[400];
 
+/* RECOMP_WATCH=addr: report the first kernel call made after the guest dword
+   at addr changes (with the caller), a cheap way to bracket a corruption */
+static void watch_check(Ctx *ctx, const char *what) {
+    static int init; static uint32_t addr, last;
+    if (!init) { init = 1; const char *w = getenv("RECOMP_WATCH"); addr = w ? (uint32_t)strtoul(w, NULL, 16) : 0; if (addr) last = RD32(MEM(addr)); }
+    if (!addr) return;
+    uint32_t now = RD32(MEM(addr));
+    if (now == last) return;
+    fprintf(stderr, "watch: [%08x] %08x -> %08x before %s from %08x (esp %08x)\n", addr, last, now, what,
+            RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+    last = now;
+}
+
+/* RECOMP_HEAPCHECK=heapbase: before each kernel call, check that the XAPI
+   heap's free-list bitmap (+0x160) agrees with its 128 list heads (+0x180)
+   and report the first call at which it stops agreeing */
+static void heap_check(Ctx *ctx, const char *what) {
+    static int init, reported; static uint32_t heap;
+    if (!init) { init = 1; const char *h = getenv("RECOMP_HEAPCHECK"); heap = h ? (uint32_t)strtoul(h, NULL, 16) : 0; }
+    if (!heap || reported) return;
+    if (!kmem_block_containing(heap) || RD32(MEM(heap + 0x10)) != 0xeeffeeffu) return; /* not created yet */
+    for (uint32_t i = 1; i < 128; i++) {
+        uint32_t head = heap + 0x180 + 8 * i;
+        int empty = RD32(MEM(head)) == head, bit = (RD8(MEM(heap + 0x160 + i / 8)) >> (i & 7)) & 1;
+        if (empty == bit) {
+            fprintf(stderr, "heapcheck: list %u %s but its bitmap bit is %d, noticed before %s from %08x (esp %08x)\n", i,
+                    empty ? "empty" : "not empty", bit, what, RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+            if (!empty && kmem_block_containing(RD32(MEM(head + 4)))) {
+                uint32_t blk = RD32(MEM(head + 4)) - 8;
+                fprintf(stderr, "  last block %08x: header %08x %08x\n", blk, RD32(MEM(blk)), RD32(MEM(blk + 4)));
+            }
+            reported = 1;
+            return;
+        }
+    }
+    /* every free list: entries are block+8 of blocks outside the list heads,
+       links agree both ways, and block sizes match the list (list 0 holds
+       blocks of 0x80 units or more) */
+    for (uint32_t i = 0; i < 128 && !reported; i++) {
+        uint32_t head = heap + 0x180 + 8 * i, e = RD32(MEM(head)), prev = head;
+        for (int n = 0; e != head && n < 100000; n++) {
+            const char *bad = NULL;
+            uint32_t blk = e - 8, size = 0;
+            if (!kmem_block_containing(e)) bad = "points outside guest memory";
+            else if (e >= heap + 0x180 && e < heap + 0x580) bad = "points at a list head";
+            else if (RD32(MEM(e + 4)) != prev) bad = "has a Blink that does not point back";
+            else if (size = RD16(MEM(blk)), i ? size != i : size < 0x80) bad = "holds a block of the wrong size";
+            if (bad) {
+                fprintf(stderr, "heapcheck: list %u entry %08x (after %08x) %s (size %x), noticed before %s from %08x (esp %08x)\n", i, e,
+                        prev, bad, size, what, RD32(MEM(RD32(ctx->r + REG_ESP))), RD32(ctx->r + REG_ESP));
+                reported = 1;
+                break;
+            }
+            prev = e;
+            e = RD32(MEM(e));
+        }
+    }
+}
+
 void kernel_call(Ctx *ctx, uint32_t ordinal) {
+    watch_check(ctx, ordinal_name(ordinal));
+    heap_check(ctx, ordinal_name(ordinal));
     KFn fn = ordinal < 400 ? k_by_ordinal[ordinal] : NULL;
     if (g_trace) trace("kernel %s(%08x, %08x, %08x, %08x) from %08x", ordinal_name(ordinal), ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3), RD32(MEM(RD32(ctx->r + REG_ESP))));
     if (!fn) {
@@ -1382,13 +1525,20 @@ void kernel_call(Ctx *ctx, uint32_t ordinal) {
 
 static void tick_thread(void *p) {
     (void)p;
-    for (;;) { Sleep(1); WR32(MEM(g_tick_count_addr), GetTickCount()); }
+    for (;;) { Sleep(1); WR32(MEM(g_tick_count_addr), tick_count()); }
 }
 
 void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir) {
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     qpc_freq = (uint64_t)f.QuadPart;
+    if (getenv("RECOMP_FIXEDFPS") && atoi(getenv("RECOMP_FIXEDFPS")) > 0) {
+        g_vstep = 10000000u / (uint32_t)atoi(getenv("RECOMP_FIXEDFPS"));
+        g_vbase_system = system_time();
+        g_vbase_tick = GetTickCount();
+        g_vhost_last = (LONG64)host_time();
+        g_vclock = 0;
+    }
     InitializeCriticalSection(&obj_lock);
     strncpy(g_game_dir, game_dir, MAX_PATH - 1);
     strncpy(g_hdd_dir, hdd_dir, MAX_PATH - 1);
@@ -1415,8 +1565,10 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
     g_launch_data_page_addr = kmem_alloc(4, 4); /* LaunchDataPage is a pointer variable: NULL = cold boot */
     {   /* a relaunch (XLaunchNewImageA) left launch.bin: build the LAUNCH_DATA_PAGE
            {Header {dwLaunchDataType, dwTitleId, szLaunchPath[520], dwFlags}, pad, LaunchData[3072]} */
-        char file[MAX_PATH];
-        snprintf(file, sizeof file, "%s\\..\\launch.bin", hdd_dir);
+        char file[MAX_PATH], dir[MAX_PATH]; /* next to the executable, where XLaunchNewImageA writes it */
+        GetModuleFileNameA(NULL, dir, sizeof dir);
+        if (strrchr(dir, '\\')) *strrchr(dir, '\\') = 0;
+        snprintf(file, sizeof file, "%s\\launch.bin", dir);
         if (getenv("RECOMP_LAUNCH")) snprintf(file, sizeof file, "%s", getenv("RECOMP_LAUNCH")); /* replay a saved launch */
         FILE *f = fopen(file, "rb");
         if (f) {
@@ -1429,7 +1581,7 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
             fclose(f);
             if (!getenv("RECOMP_LAUNCH")) { /* keep it as launch.last.bin for RECOMP_LAUNCH replays */
                 char keep[MAX_PATH];
-                snprintf(keep, sizeof keep, "%s\\..\\launch.last.bin", hdd_dir);
+                snprintf(keep, sizeof keep, "%s\\launch.last.bin", dir);
                 MoveFileExA(file, keep, MOVEFILE_REPLACE_EXISTING);
             }
             WR32(MEM(g_launch_data_page_addr), page);
@@ -1443,7 +1595,7 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
     g_thread_type_addr = kmem_alloc(32, 4);
     WR32(MEM(g_hardware_info_addr), 0x00000000); /* Flags: retail, no special hardware */
     WR32(MEM(g_disk_cache_count_addr), 3);
-    WR32(MEM(g_tick_count_addr), GetTickCount());
+    WR32(MEM(g_tick_count_addr), tick_count());
     pool_run(tick_thread, NULL);
 
     for (size_t j = 0; j < N_IMPORTS; j++) {
