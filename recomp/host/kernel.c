@@ -364,15 +364,37 @@ static void ensure_dir(const char *path) {
 
 /* ---- time --------------------------------------------------------------- */
 static uint64_t qpc_freq;
+/* RECOMP_FIXEDFPS=n: the guest's clocks show a virtual time that advances
+   1/n s per present, so the game's animation is the same at a given frame
+   whatever the host's speed (comparing renderers, repeating captures).
+   While nothing is presented for a tenth of a second (loading, which waits
+   on the clock), it follows the host's time instead. */
+static volatile LONG64 g_vclock = -1;  /* 100 ns units since boot, -1 for the host clock */
+static volatile LONG64 g_vhost_last;   /* host time of the last advance */
+static uint64_t g_vstep, g_vbase_system, g_vbase_tick;
+static uint64_t host_time(void) {
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (uint64_t)((double)c.QuadPart * 1e7 / (double)qpc_freq);
+}
+static uint64_t vclock(void) {
+    LONG64 now = (LONG64)host_time(), last = g_vhost_last;
+    if (now - last > 1000000 && InterlockedCompareExchange64(&g_vhost_last, now, last) == last)
+        InterlockedExchangeAdd64(&g_vclock, now - last);
+    return (uint64_t)g_vclock;
+}
 static uint64_t system_time(void) {
+    if (g_vclock >= 0) return g_vbase_system + vclock();
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
     return ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 }
-static uint64_t interrupt_time(void) {
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    return (uint64_t)((double)c.QuadPart * 1e7 / (double)qpc_freq);
+static uint64_t interrupt_time(void) { return g_vclock >= 0 ? vclock() : host_time(); }
+static uint32_t tick_count(void) { return g_vclock >= 0 ? (uint32_t)(g_vbase_tick + vclock() / 10000) : GetTickCount(); }
+void kernel_frame_presented(void) {
+    if (g_vclock < 0) return;
+    InterlockedExchangeAdd64(&g_vclock, (LONG64)g_vstep);
+    InterlockedExchange64(&g_vhost_last, (LONG64)host_time());
 }
 
 /* ---- threads ------------------------------------------------------------- */
@@ -789,7 +811,7 @@ K(KeQueryPerformanceCounter) {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
     /* 64-bit return in EDX:EAX; scaled to the Xbox's 733 MHz counter */
-    uint64_t v = (uint64_t)((double)c.QuadPart * 733333333.0 / (double)qpc_freq);
+    uint64_t v = g_vclock >= 0 ? (uint64_t)((double)vclock() * 73.3333333) : (uint64_t)((double)c.QuadPart * 733333333.0 / (double)qpc_freq);
     WR32(ctx->r + REG_EDX, (uint32_t)(v >> 32));
     RET((uint32_t)v, 0);
 }
@@ -1453,13 +1475,20 @@ void kernel_call(Ctx *ctx, uint32_t ordinal) {
 
 static void tick_thread(void *p) {
     (void)p;
-    for (;;) { Sleep(1); WR32(MEM(g_tick_count_addr), GetTickCount()); }
+    for (;;) { Sleep(1); WR32(MEM(g_tick_count_addr), tick_count()); }
 }
 
 void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir) {
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     qpc_freq = (uint64_t)f.QuadPart;
+    if (getenv("RECOMP_FIXEDFPS") && atoi(getenv("RECOMP_FIXEDFPS")) > 0) {
+        g_vstep = 10000000u / (uint32_t)atoi(getenv("RECOMP_FIXEDFPS"));
+        g_vbase_system = system_time();
+        g_vbase_tick = GetTickCount();
+        g_vhost_last = (LONG64)host_time();
+        g_vclock = 0;
+    }
     InitializeCriticalSection(&obj_lock);
     strncpy(g_game_dir, game_dir, MAX_PATH - 1);
     strncpy(g_hdd_dir, hdd_dir, MAX_PATH - 1);
@@ -1516,7 +1545,7 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
     g_thread_type_addr = kmem_alloc(32, 4);
     WR32(MEM(g_hardware_info_addr), 0x00000000); /* Flags: retail, no special hardware */
     WR32(MEM(g_disk_cache_count_addr), 3);
-    WR32(MEM(g_tick_count_addr), GetTickCount());
+    WR32(MEM(g_tick_count_addr), tick_count());
     pool_run(tick_thread, NULL);
 
     for (size_t j = 0; j < N_IMPORTS; j++) {

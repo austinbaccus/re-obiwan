@@ -169,6 +169,7 @@ HOOK(D3DDevice_Present) {
     g_frames++;
     if (g_frames <= 5 || g_frames % 60 == 0) fprintf(stderr, "d3d: present #%u\n", g_frames);
     if (g_render) r_present();
+    kernel_frame_presented();
     RET(D3DDevice_Present, 0);
 }
 HOOK(D3DDevice_PersistDisplay) { RET(D3DDevice_PersistDisplay, 0); }
