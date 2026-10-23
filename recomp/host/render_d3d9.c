@@ -846,8 +846,19 @@ static void apply_textures(void);
 static void apply_pixel_shader(void);
 static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
     if (!vshader_ready(g_vsh) || !n) return;
-    if (getenv("RECOMP_NOSHADOW"))   /* debugging: leave out draws that sample a shadow buffer */
-        for (int s = 0; s < 4; s++) if (g_bound[s] && depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0)) return;
+    {   /* debugging: RECOMP_NOSHADOW leaves out draws that sample a shadow
+           buffer, RECOMP_SHADOWDRAWS=a-b keeps only the a-th to b-th of each frame */
+        static uint32_t frame, k;
+        int receiver = 0;
+        for (int s = 0; s < 4; s++) receiver |= g_bound[s] && depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0);
+        if (frame != g_frame) frame = g_frame, k = 0;
+        if (receiver) {
+            const char *e = getenv("RECOMP_SHADOWDRAWS");
+            unsigned a = 0, b = 0;
+            k++;
+            if (getenv("RECOMP_NOSHADOW") || (e && sscanf(e, "%u-%u", &a, &b) == 2 && (k < a || k > b))) return;
+        }
+    }
     uint32_t first = 0, last = n - 1;
     if (idx) {
         first = 0xffff; last = 0;
@@ -867,6 +878,38 @@ static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t st
     }
     apply_textures();
     apply_pixel_shader();
+    {   /* RECOMP_SHADOWLOG=frame: the shadow-receiving draws of that frame:
+           constants c5..c9 and the light-space coordinates of a few vertices */
+        static int frame = -1;
+        if (frame < 0) frame = getenv("RECOMP_SHADOWLOG") ? atoi(getenv("RECOMP_SHADOWLOG")) : 0;
+        int s = 0;
+        while (s < 4 && !(g_bound[s] && depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0))) s++;
+        if (frame && g_frame + 1 == (uint32_t)frame && s < 4) {
+            DWORD au, av, bc;
+            IDirect3DDevice9_GetSamplerState(g_dev, s, D3DSAMP_ADDRESSU, &au);
+            IDirect3DDevice9_GetSamplerState(g_dev, s, D3DSAMP_ADDRESSV, &av);
+            IDirect3DDevice9_GetSamplerState(g_dev, s, D3DSAMP_BORDERCOLOR, &bc);
+            fprintf(stderr, "shadow: vs %08x ps %08x stage %d addr %lu %lu border %08lx n %u", g_vsh->handle, g_ps_handle, s, au, av, bc, n);
+            for (int r = 5; r <= 9; r++) fprintf(stderr, " | c%d %g %g %g %g", r, g_vsc[r][0], g_vsc[r][1], g_vsc[r][2], g_vsc[r][3]);
+            fprintf(stderr, "\n");
+            int pos = 0;
+            while (pos < g_vsh->nregs && g_vsh->regs[pos] != 0) pos++;
+            float qmin = 1e30f, qmax = -1e30f, pmin[3] = {1e30f, 1e30f, 1e30f}, pmax[3] = {-1e30f, -1e30f, -1e30f};
+            int inside = 0, behind = 0;
+            for (uint32_t v = 0; pos < g_vsh->nregs && v < count; v++) {
+                const float *p = buf + (size_t)v * g_vsh->nregs * 4 + pos * 4;
+                float l[4];
+                for (int r = 0; r < 4; r++) l[r] = p[0] * g_vsc[5 + r][0] + p[1] * g_vsc[5 + r][1] + p[2] * g_vsc[5 + r][2] + p[3] * g_vsc[5 + r][3];
+                if (l[3] < qmin) qmin = l[3];
+                if (l[3] > qmax) qmax = l[3];
+                for (int a = 0; a < 3; a++) { if (p[a] < pmin[a]) pmin[a] = p[a]; if (p[a] > pmax[a]) pmax[a] = p[a]; }
+                float s = l[0] / l[3], t = l[1] / l[3];
+                if (s >= 0 && s < 256 && t >= 0 && t < 256) { if (l[3] > 0) inside++; else behind++; }
+            }
+            fprintf(stderr, "  verts %u: q %.2f .. %.2f, in map %d (q < 0: %d), pos %.0f..%.0f %.0f..%.0f %.0f..%.0f\n", count, qmin, qmax, inside, behind,
+                    pmin[0], pmax[0], pmin[1], pmax[1], pmin[2], pmax[2]);
+        }
+    }
     {   /* RECOMP_STATELOG=frame: the shader draws of that frame too */
         static int frame = -1;
         if (frame < 0) frame = getenv("RECOMP_STATELOG") ? atoi(getenv("RECOMP_STATELOG")) : 0;
@@ -1115,6 +1158,15 @@ static void statelog(uint32_t prim, uint32_t n, const void *data, uint32_t strid
     IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLOROP, &cop); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLORARG1, &ca1);
     IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_COLORARG2, &ca2); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAOP, &aop);
     IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAARG1, &aa1); IDirect3DDevice9_GetTextureStageState(g_dev, 0, D3DTSS_ALPHAARG2, &aa2);
+    if (g_bound[0])
+        fprintf(stderr, "       tex0 data %08x format %08x size %08x, verts", RD32(MEM(g_bound[0] + 4)), RD32(MEM(g_bound[0] + 0xC)), RD32(MEM(g_bound[0] + 0x10)));
+    for (uint32_t i = 0; g_bound[0] && i < n && i < 8; i++) {
+        const float *q = (const float *)((const uint8_t *)data + i * stride);
+        fprintf(stderr, " (");
+        for (uint32_t k = 0; k < stride / 4 && k < 8; k++) fprintf(stderr, k ? " %g" : "%g", q[k]);
+        fprintf(stderr, ")");
+    }
+    if (g_bound[0]) fprintf(stderr, "\n");
     /* where the first vertex lands: world * view * projection, then the viewport */
     D3DMATRIX m[3];
     D3DVIEWPORT9 vp;

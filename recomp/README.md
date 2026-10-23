@@ -88,8 +88,9 @@ next to the executable. Environment switches for unattended runs:
 
 - `RECOMP_STALL=seconds`: when no frame has been presented for that long,
   print every guest thread's guest and host stack (three samples, then exit).
-- `RECOMP_INPUT="300:START,700:A"`: press a gamepad button for 10 frames at
-  those frame numbers (the attract loop only ends on START). The keyboard
+- `RECOMP_INPUT="300:START,700:A,1950:LSUP:900"`: press a gamepad button for
+  10 frames (or the given count) at those frame numbers (the attract loop
+  only ends on START); LSUP/LSDOWN/LSLEFT/LSRIGHT push the left stick. The keyboard
   stands in for the pad while the game window has focus: Esc = START,
   Enter = A, Space = B, Backspace = BACK, arrows = left stick.
 - Scripts for relaunched runs: `RECOMP_INPUT` and `RECOMP_SHOT` take
@@ -105,6 +106,10 @@ next to the executable. Environment switches for unattended runs:
 - `RECOMP_STATELOG=frame`: print the device state (blending, stage
   operations, where the first vertex lands on screen) behind every draw of
   that frame.
+- `RECOMP_SHADOWLOG=frame`: for the draws of that frame that sample a shadow
+  buffer, the light projection constants and where the vertices land in it.
+  `RECOMP_NOSHADOW=1` leaves those draws out; `RECOMP_SHADOWDRAWS=a-b` keeps
+  only the a-th to b-th of each frame.
 - `RECOMP_VSLOG=1`: log shader assembly, vertex declarations, the vertex
   shader constants set (each register/count once) and stream strides.
 - `RECOMP_RSLOG=1`: log each change of a deferred render state (D3D8 3948

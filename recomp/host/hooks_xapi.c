@@ -99,10 +99,11 @@ HOOK(XInputGetCapabilities) {
     for (int i = 0; i < 4; i++) WR16(MEM(caps + 13 + 2 * i), 0xffff); /* thumb axes */
     RET(0, 2);
 }
-/* RECOMP_INPUT="frame:BUTTON,frame:BUTTON,...": press that button for 10
-   frames starting at that frame, for runs nobody is sitting at (the attract
-   loop only ends on START). Buttons: START BACK A B X Y UP DOWN LEFT RIGHT. */
-static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y) {
+/* RECOMP_INPUT="frame:BUTTON,frame:BUTTON:frames,...": press that button for
+   10 frames (or the given number) starting at that frame, for runs nobody is
+   sitting at (the attract loop only ends on START). Buttons: START BACK A B X
+   Y UP DOWN LEFT RIGHT, and the left stick pushed: LSUP LSDOWN LSLEFT LSRIGHT. */
+static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y, int16_t *lx, int16_t *ly) {
     const char *script = getenv("RECOMP_INPUT");
     if (!script) return 0;
     uint32_t frame = d3d_frame_count();
@@ -110,8 +111,8 @@ static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y)
     const char *end = strchr(script, '|'); /* '|' starts the next run's script */
     for (const char *p = script; *p && (!end || p < end); ) {
         char name[16] = "";
-        unsigned at = 0;
-        if (sscanf(p, "%u:%15[A-Za-z]", &at, name) == 2 && frame >= at && frame < at + 10) {
+        unsigned at = 0, len = 10;
+        if (sscanf(p, "%u:%15[A-Za-z]:%u", &at, name, &len) >= 2 && frame >= at && frame < at + len) {
             if (!strcmp(name, "START")) buttons |= 0x0010;
             else if (!strcmp(name, "BACK")) buttons |= 0x0020;
             else if (!strcmp(name, "UP")) buttons |= 0x0001;
@@ -122,6 +123,10 @@ static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y)
             else if (!strcmp(name, "B")) *b = 255;
             else if (!strcmp(name, "X")) *x = 255;
             else if (!strcmp(name, "Y")) *y = 255;
+            else if (!strcmp(name, "LSUP")) *ly = 32000;
+            else if (!strcmp(name, "LSDOWN")) *ly = -32000;
+            else if (!strcmp(name, "LSLEFT")) *lx = -32000;
+            else if (!strcmp(name, "LSRIGHT")) *lx = 32000;
         }
         p = strchr(p, ',');
         if (!p) break;
@@ -151,7 +156,7 @@ HOOK(XInputGetState) {
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
         if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
     }
-    buttons |= scripted_buttons(&a, &b, &x, &y);
+    buttons |= scripted_buttons(&a, &b, &x, &y, &lx, &ly);
     WR16(MEM(state + 4), buttons);
     WR8(MEM(state + 6), a); /* A */
     WR8(MEM(state + 7), b); /* B */
