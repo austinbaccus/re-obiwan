@@ -1,8 +1,11 @@
 /* Host replacements for guest functions listed in hooks.csv. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <xinput.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "kernel.h"
 #include "render.h"
@@ -61,29 +64,78 @@ HOOK(XLaunchNewImageA) {
 }
 HOOK(XapiInitAutoPowerDown) { RET_CDECL(ctx); }
 
-/* ---- input: one gamepad on port 0, no memory units ---------------------- */
-/* XINPUT_STATE: dwPacketNumber, Gamepad { wButtons, bAnalogButtons[8], sThumbLX, sThumbLY, sThumbRX, sThumbRY } */
-static uint32_t g_pad_handle_counter = 0x50000000;
+/* ---- input: gamepads on ports 0..3, no memory units ---------------------- */
+/* Windows XInput controllers 0..3 are Xbox ports 0..3. Port 0 is always
+   present: the keyboard and RECOMP_INPUT scripts drive it too. Plugging and
+   unplugging reach the game as XGetDeviceChanges insertions and removals
+   (XBoxGenerator::vf01 opens and closes its pads on them). */
+#define XDEVICE_TYPE_GAMEPAD 0x003b4fa0 /* the gamepad entry of XAPI's device type table */
+typedef DWORD(WINAPI *XInputGetStateFn)(DWORD, XINPUT_STATE *);
+typedef DWORD(WINAPI *XInputSetStateFn)(DWORD, XINPUT_VIBRATION *);
+static XInputGetStateFn host_get_state;
+static XInputSetStateFn host_set_state;
+static struct { int connected; DWORD retry; XINPUT_STATE s; } g_pads[4];
+static uint32_t g_reported; /* the ports the game has been told about */
+
+static void xinput_load(void) {
+    static int done;
+    if (done++) return;
+    const char *const dlls[] = {"xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"};
+    for (int i = 0; i < 3 && !host_get_state; i++) {
+        HMODULE m = LoadLibraryA(dlls[i]);
+        if (!m) continue;
+        host_get_state = (XInputGetStateFn)GetProcAddress(m, "XInputGetState");
+        host_set_state = (XInputSetStateFn)GetProcAddress(m, "XInputSetState");
+    }
+    if (!host_get_state) fprintf(stderr, "input: no XInput on this system; keyboard only\n");
+}
+
+/* read one host controller; one that was absent is asked again at most once
+   a second (polling a missing XInput device is slow) */
+static int pad_read(int port) {
+    xinput_load();
+    if (!host_get_state) return 0;
+    DWORD now = GetTickCount();
+    if (!g_pads[port].connected && now - g_pads[port].retry < 1000 && g_pads[port].retry) return 0;
+    int was = g_pads[port].connected;
+    g_pads[port].connected = host_get_state(port, &g_pads[port].s) == ERROR_SUCCESS;
+    if (!g_pads[port].connected) { g_pads[port].retry = now ? now : 1; memset(&g_pads[port].s, 0, sizeof g_pads[port].s); }
+    if (was != g_pads[port].connected) fprintf(stderr, "input: controller %d %s\n", port + 1, g_pads[port].connected ? "connected" : "removed");
+    return g_pads[port].connected;
+}
+
+static uint32_t ports_present(void) {
+    uint32_t mask = 1; /* the keyboard */
+    for (int p = 0; p < 4; p++) if (pad_read(p)) mask |= 1u << p;
+    return mask;
+}
+
 HOOK(XInitDevices) { trace("XInitDevices"); RET(0, 2); }
 HOOK(XGetDevices) {
     uint32_t type = ARG(ctx, 0);
-    /* bit mask of ports with that device type; gamepad type is the first table entry */
     trace("XGetDevices(%08x)", type);
-    RET(type == 0x003b4fa0 ? 1 : 0, 1);
+    if (type != XDEVICE_TYPE_GAMEPAD) RET(0, 1);
+    g_reported = ports_present(); /* changes are reported from here on */
+    RET(g_reported, 1);
 }
 HOOK(XGetDeviceChanges) {
-    uint32_t pins = ARG(ctx, 1), prem = ARG(ctx, 2);
-    static int first = 1;
-    WR32(MEM(pins), first && ARG(ctx, 0) == 0x003b4fa0 ? 1 : 0);
-    WR32(MEM(prem), 0);
-    int changed = first && ARG(ctx, 0) == 0x003b4fa0;
-    if (ARG(ctx, 0) == 0x003b4fa0) first = 0;
-    RET(changed, 3);
+    uint32_t pins = ARG(ctx, 1), prem = ARG(ctx, 2), ins = 0, rem = 0;
+    if (ARG(ctx, 0) == XDEVICE_TYPE_GAMEPAD) {
+        uint32_t now = ports_present();
+        ins = now & ~g_reported;
+        rem = g_reported & ~now;
+        g_reported = now;
+    }
+    WR32(MEM(pins), ins);
+    WR32(MEM(prem), rem);
+    RET(ins || rem, 3);
 }
+/* handles carry their port in the low bits */
+static uint32_t g_pad_handle_counter;
 HOOK(XInputOpen) {
     uint32_t port = ARG(ctx, 1);
     trace("XInputOpen port %u", port);
-    RET(port == 0 ? g_pad_handle_counter++ : 0, 4);
+    RET(port < 4 && (g_reported >> port & 1) ? 0x50000000 | (++g_pad_handle_counter << 4) | port : 0, 4);
 }
 HOOK(XInputClose) { RET(0, 1); }
 HOOK(XInputGetCapabilities) {
@@ -135,35 +187,78 @@ static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y,
     return buttons;
 }
 
+/* a stick with a radial dead zone (RECOMP_DEADZONE, a fraction of full
+   travel, default 0.15: the game uses the raw values), rescaled so the rest
+   of the travel still reaches full deflection */
+static void dead_zone(int16_t *x, int16_t *y) {
+    static float dz = -1;
+    if (dz < 0) dz = getenv("RECOMP_DEADZONE") ? (float)atof(getenv("RECOMP_DEADZONE")) : 0.15f;
+    float fx = *x / 32767.0f, fy = *y / 32767.0f, m = sqrtf(fx * fx + fy * fy);
+    if (m <= dz) { *x = *y = 0; return; }
+    float s = ((m > 1 ? 1 : m) - dz) / (1 - dz) / m;
+    float ox = fx * s * 32767, oy = fy * s * 32767;
+    *x = (int16_t)(ox > 32767 ? 32767 : ox < -32768 ? -32768 : ox);
+    *y = (int16_t)(oy > 32767 ? 32767 : oy < -32768 ? -32768 : oy);
+}
+
 HOOK(XInputGetState) {
-    uint32_t state = ARG(ctx, 1);
+    uint32_t handle = ARG(ctx, 0), state = ARG(ctx, 1), port = handle & 3;
     static uint32_t packet;
     if (!packet) fprintf(stderr, "input: the game polls the gamepad (frame %u)\n", d3d_frame_count());
+    int pad = pad_read((int)port);
+    if (!pad && port != 0) RET(ERROR_DEVICE_NOT_CONNECTED, 2);
     memset(MEM(state), 0, 0x16); /* XINPUT_STATE: dwPacketNumber, then the packed XINPUT_GAMEPAD at +4 */
     WR32(MEM(state), ++packet);
-    /* keyboard as a stand-in until real input is wired: arrows = left stick, Enter = A, Esc = START;
-       only while the game window has focus (GetAsyncKeyState sees keys typed anywhere) */
-    int16_t lx = 0, ly = 0;
-    uint8_t a = 0, b = 0, x = 0, y = 0;
+    /* Xbox XINPUT_GAMEPAD: wButtons (D-pad, START, BACK, thumb clicks: the
+       PC's low byte), bAnalogButtons[8] (A, B, X, Y, BLACK, WHITE, left and
+       right trigger; the game counts any non-zero value as pressed), sticks */
+    int16_t lx = 0, ly = 0, rx = 0, ry = 0;
+    uint8_t an[8] = {0};
     uint16_t buttons = 0;
-    if (r_has_focus()) {
-        if (GetAsyncKeyState(VK_LEFT) & 0x8000) lx = -32000;
-        if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
-        if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;
-        if (GetAsyncKeyState(VK_DOWN) & 0x8000) ly = -32000;
-        if (GetAsyncKeyState(VK_RETURN) & 0x8000) a = 255;
-        if (GetAsyncKeyState(VK_SPACE) & 0x8000) b = 255;
-        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
-        if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+    if (pad) {
+        const XINPUT_GAMEPAD *g = &g_pads[port].s.Gamepad;
+        static const WORD face[6] = {XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
+                                     XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_LEFT_SHOULDER}; /* black, white */
+        buttons = g->wButtons & 0xff;
+        for (int i = 0; i < 6; i++) an[i] = (g->wButtons & face[i]) ? 255 : 0;
+        an[6] = g->bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ? g->bLeftTrigger : 0;
+        an[7] = g->bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ? g->bRightTrigger : 0;
+        lx = g->sThumbLX; ly = g->sThumbLY; rx = g->sThumbRX; ry = g->sThumbRY;
+        dead_zone(&lx, &ly);
+        dead_zone(&rx, &ry);
     }
-    buttons |= scripted_buttons(&a, &b, &x, &y, &lx, &ly);
+    if (port == 0) {
+        /* keyboard: arrows = left stick, Enter = A, Space = B, Esc = START,
+           Backspace = BACK; only while the game window has focus
+           (GetAsyncKeyState sees keys typed anywhere) */
+        if (r_has_focus()) {
+            if (GetAsyncKeyState(VK_LEFT) & 0x8000) lx = -32000;
+            if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
+            if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;
+            if (GetAsyncKeyState(VK_DOWN) & 0x8000) ly = -32000;
+            if (GetAsyncKeyState(VK_RETURN) & 0x8000) an[0] = 255;
+            if (GetAsyncKeyState(VK_SPACE) & 0x8000) an[1] = 255;
+            if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
+            if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+        }
+        buttons |= scripted_buttons(&an[0], &an[1], &an[2], &an[3], &lx, &ly);
+    }
     WR16(MEM(state + 4), buttons);
-    WR8(MEM(state + 6), a); /* A */
-    WR8(MEM(state + 7), b); /* B */
-    WR8(MEM(state + 8), x);
-    WR8(MEM(state + 9), y);
+    for (int i = 0; i < 8; i++) WR8(MEM(state + 6 + i), an[i]);
     WR16(MEM(state + 14), (uint16_t)lx);
     WR16(MEM(state + 16), (uint16_t)ly);
+    WR16(MEM(state + 18), (uint16_t)rx);
+    WR16(MEM(state + 20), (uint16_t)ry);
     RET(0, 2);
 }
-HOOK(XInputSetState) { RET(0, 2); }
+/* (hDevice, pFeedback): XINPUT_FEEDBACK is a 0x42-byte header (dwStatus,
+   hEvent, reserved) then the left (heavy) and right motor speeds. The Xbox
+   sends asynchronously; the game only sends again once dwStatus is no longer
+   ERROR_IO_PENDING, so this completes at once. */
+HOOK(XInputSetState) {
+    uint32_t port = ARG(ctx, 0) & 3, fb = ARG(ctx, 1);
+    XINPUT_VIBRATION v = {RD16(MEM(fb + 0x42)), RD16(MEM(fb + 0x44))};
+    if (!getenv("RECOMP_NORUMBLE") && host_set_state && g_pads[port].connected) host_set_state(port, &v);
+    WR32(MEM(fb), ERROR_SUCCESS);
+    RET(ERROR_SUCCESS, 2);
+}

@@ -89,8 +89,14 @@ docker compose exec ghidra-mcp bash -c '
 #    once from an x64_x86 VS prompt:
 #      cmake -S recomp -B build\game -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build\game --target obiwan
-.\build\game\obiwan.exe extracted\default.xbe   # a 640x480 window; Esc = START, Enter = A, arrows = stick
+.\build\game\obiwan.exe extracted\default.xbe   # a 640x480 window; a controller, or Esc = START, Enter = A, arrows = stick
 ```
+
+Controllers: Windows XInput pads 1..4 are Xbox ports 1..4 and can be plugged
+in or out while the game runs. A, B, X and Y are the analog face buttons
+(fully pressed), LB is White, RB is Black, the triggers and sticks pass
+through with a radial dead zone (`RECOMP_DEADZONE=0.15`, a fraction of full
+travel), and rumble reaches the pad (`RECOMP_NORUMBLE=1` turns it off).
 
 The game reads its files from the folder that holds `default.xbe` and keeps
 its "hard disk" (save games, title metadata, cache partition) in `xbox_hdd`
