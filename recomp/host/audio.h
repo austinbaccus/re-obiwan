@@ -24,3 +24,15 @@ void au_buffer_loop_region(int id, uint32_t start, uint32_t length); /* bytes; l
 void au_buffer_position(int id, float x, float y, float z);
 void au_buffer_distances(int id, float min, float max); /* negative: unchanged */
 void au_listener(const float *position, const float *front, const float *top); /* NULL: unchanged */
+
+/* Streams (music, speech): packets of data queued on a voice. done(ctx, 0)
+   runs on the audio thread once a packet has played, done(ctx, 1) when it
+   was flushed. The volume, frequency and position calls above work on a
+   stream's id as well. */
+typedef void (*AuPacketDone)(void *ctx, int flushed);
+int  au_stream_create(const AuFormat *f, int is3d);
+int  au_stream_submit(int id, const uint8_t *data, uint32_t bytes, AuPacketDone done, void *ctx); /* 0: not queued */
+void au_stream_flush(int id);
+void au_stream_pause(int id, int pause);
+int  au_stream_busy(int id);                /* packets queued */
+void au_stream_free(int id);

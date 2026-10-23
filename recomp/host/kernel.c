@@ -822,7 +822,37 @@ K(KeQueryInterruptTime) {
     WR32(ctx->r + REG_EDX, (uint32_t)(v >> 32));
     RET((uint32_t)v, 0);
 }
+/* User APCs: NtReadFile with an ApcRoutine (ReadFileEx, which the game
+   streams music and speech with) completes at once, but as on the Xbox its
+   routine runs only when the issuing thread next waits alertably; such a
+   wait then returns STATUS_USER_APC without waiting. Each guest thread has
+   its own host thread, so the queue is thread-local. */
+#define STATUS_USER_APC_ 0xC0
+typedef struct { uint32_t routine, context, iosb; } Apc;
+static __declspec(thread) Apc t_apcs[32];
+static __declspec(thread) int t_napcs;
+static void queue_apc(uint32_t routine, uint32_t context, uint32_t iosb) {
+    if (t_napcs < 32) t_apcs[t_napcs++] = (Apc){routine, context, iosb};
+    else fprintf(stderr, "kernel: APC queue full\n");
+}
+/* an alertable wait with APCs queued: pop the wait's arguments, run them
+   (and any they queue) and return STATUS_USER_APC; 0 when there are none */
+static int deliver_apcs(Ctx *ctx, int alertable, int nargs) {
+    if (!alertable || !t_napcs) return 0;
+    RET_STDCALL(ctx, nargs);
+    while (t_napcs) {
+        Apc a = t_apcs[0];
+        memmove(t_apcs, t_apcs + 1, --t_napcs * sizeof *t_apcs);
+        uint32_t args[3] = {a.context, a.iosb, 0};
+        rt_host_call(ctx, a.routine, 3, args); /* (ApcContext, IoStatusBlock, Reserved) */
+    }
+    SET_EAX(ctx, STATUS_USER_APC_);
+    return 1;
+}
+
 K(KeDelayExecutionThread) {
+    /* (WaitMode, Alertable, Interval) */
+    if (deliver_apcs(ctx, ARG(ctx, 1) & 0xff, 3)) return;
     uint32_t pint = ARG(ctx, 2);
     int64_t t = pint ? (int64_t)RD64(MEM(pint)) : 0;
     DWORD ms = t < 0 ? (DWORD)((-t) / 10000) : 0;
@@ -863,6 +893,8 @@ static void ensure_event(uint32_t ev) {
 }
 K(KeSetEvent) { uint32_t ev = ARG(ctx, 0); ensure_event(ev); SetEvent(KOBJ_HOST(ev)); WR32(MEM(ev + 4), 1); RET(0, 3); }
 K(KeWaitForSingleObject) {
+    /* (Object, WaitReason, WaitMode, Alertable, Timeout) */
+    if (deliver_apcs(ctx, ARG(ctx, 3) & 0xff, 5)) return;
     uint32_t obj = ARG(ctx, 0), pint = ARG(ctx, 4);
     int64_t t = pint ? (int64_t)RD64(MEM(pint)) : 0;
     DWORD ms = pint ? (t < 0 ? (DWORD)((-t) / 10000) : 0) : INFINITE;
@@ -1108,6 +1140,8 @@ K(NtReadFile) {
     trace("  read %s: %u bytes at %lld -> %lu (buf %08x, offset arg %s)", o->path, len, before.QuadPart, got, buf,
           poff ? ((int64_t)RD64(MEM(poff)) < 0 ? "current" : "explicit") : "none");
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), got); }
+    /* ReadFileEx: the completion routine runs at the thread's next alertable wait */
+    if (ARG(ctx, 2) && st == STATUS_SUCCESS_) queue_apc(ARG(ctx, 2), ARG(ctx, 3), iosb);
     RET(st, 8);
 }
 K(NtWriteFile) {
@@ -1312,6 +1346,8 @@ K(NtSetEvent) {
     RET(STATUS_SUCCESS_, 2);
 }
 K(NtWaitForSingleObject) {
+    /* (Handle, Alertable, Timeout) */
+    if (deliver_apcs(ctx, ARG(ctx, 1) & 0xff, 3)) return;
     Obj *o = handle_get(ARG(ctx, 0));
     uint32_t pint = ARG(ctx, 2);
     if (!o) RET(STATUS_INVALID_HANDLE_, 3);
@@ -1328,7 +1364,17 @@ K(ObReferenceObjectByHandle) {
     RET(STATUS_SUCCESS_, 3);
 }
 K(ObfDereferenceObject) { RET(0, 0); /* fastcall, arg in ECX */ }
-K(NtUserIoApcDispatcher) { RET(0, 3); }
+/* the APC routine XAPI's ReadFileEx/WriteFileEx pass: (ApcContext = the
+   completion routine, IoStatusBlock = the OVERLAPPED, Reserved); calls
+   CompletionRoutine(dwErrorCode, dwNumberOfBytesTransfered, lpOverlapped) */
+K(NtUserIoApcDispatcher) {
+    uint32_t routine = ARG(ctx, 0), iosb = ARG(ctx, 1);
+    uint32_t status = RD32(MEM(iosb)), bytes = RD32(MEM(iosb + 4));
+    uint32_t err = status == 0 ? 0 : status == (uint32_t)STATUS_END_OF_FILE_ ? 38 /* ERROR_HANDLE_EOF */ : 31 /* ERROR_GEN_FAILURE */;
+    RET_STDCALL(ctx, 3);
+    uint32_t args[3] = {err, bytes, iosb};
+    rt_host_call(ctx, routine, 3, args);
+}
 
 /* threads */
 K(PsCreateSystemThreadEx) {

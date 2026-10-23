@@ -71,7 +71,10 @@ is a translation of the game's code.
   at its API too. Each sound buffer is an XAudio2 voice playing a host copy
   of its data (Xbox ADPCM decoded to PCM) with DirectSound's play, stop,
   loop, cursor, volume and frequency semantics, and 3D buffers get distance
-  attenuation and a stereo pan. Streams (music, speech) are still silent.
+  attenuation and a stereo pan. Streams (music, speech) queue the game's
+  packets on a voice and report each one done once it has played; the game
+  reads them with ReadFileEx, whose completion the host kernel delivers as an
+  APC at the thread's next alertable wait, as the Xbox kernel does.
   The engine starts before the XBE is loaded, like the Direct3D device:
   Windows cannot create threads in the process afterwards.
 

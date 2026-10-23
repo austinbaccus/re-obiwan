@@ -24,8 +24,12 @@ static IXAudio2 *g_xa;
 static IXAudio2MasteringVoice *g_master;
 static CRITICAL_SECTION g_lock;
 
-typedef struct {
-    int used, is3d;
+typedef struct Voice Voice;
+typedef struct { IXAudio2VoiceCallback cb; Voice *v; } Callback; /* a stream's voice callback and its voice */
+struct Voice {
+    int used, is3d, stream, paused;
+    Callback callback;
+    volatile LONG gen, queued;  /* streams: flush generation, packets queued */
     AuFormat f;                 /* the guest's format */
     WAVEFORMATEX hf;            /* what the voice plays */
     IXAudio2SourceVoice *voice;
@@ -36,7 +40,7 @@ typedef struct {
     uint32_t pos_frame;         /* the position while stopped */
     uint32_t loop_start, loop_len; /* frames; length 0: the whole buffer */
     float volume, x, y, z, min_d, max_d;
-} Voice;
+};
 #define VOICES 2048
 #define MAX_RATIO 4.0f /* SetFrequency up to four times the format's rate */
 static Voice g_v[VOICES];
@@ -115,7 +119,9 @@ static uint32_t bytes_of(const AuFormat *f, uint32_t frames) {
     return frames * f->block_align;
 }
 
-int au_buffer_create(const AuFormat *f, int is3d) {
+static const IXAudio2VoiceCallbackVtbl k_stream_callbacks;
+
+static int create_voice(const AuFormat *f, int is3d, int stream) {
     if (!g_xa || !f->channels || f->channels > 2 || !f->rate) return 0;
     if (f->tag != AU_FORMAT_XBOX_ADPCM && !(f->tag == AU_FORMAT_PCM && (f->bits == 8 || f->bits == 16))) {
         static int warned;
@@ -131,14 +137,19 @@ int au_buffer_create(const AuFormat *f, int is3d) {
     v->f = *f;
     v->is3d = is3d;
     v->volume = 1; v->min_d = 1; v->max_d = 1e9f;
+    v->stream = stream;
+    v->callback.cb.lpVtbl = (IXAudio2VoiceCallbackVtbl *)&k_stream_callbacks;
+    v->callback.v = v;
     int bits = f->tag == AU_FORMAT_XBOX_ADPCM ? 16 : f->bits;
     v->hf = (WAVEFORMATEX){WAVE_FORMAT_PCM, f->channels, f->rate, f->rate * f->channels * bits / 8, (WORD)(f->channels * bits / 8), (WORD)bits, 0};
-    HRESULT hr = IXAudio2_CreateSourceVoice(g_xa, &v->voice, &v->hf, 0, MAX_RATIO, NULL, NULL, NULL);
+    HRESULT hr = IXAudio2_CreateSourceVoice(g_xa, &v->voice, &v->hf, 0, MAX_RATIO, stream ? &v->callback.cb : NULL, NULL, NULL);
     if (FAILED(hr)) { v->voice = NULL; LeaveCriticalSection(&g_lock); fprintf(stderr, "audio: no source voice (%08lx)\n", hr); return 0; }
     v->used = 1;
     LeaveCriticalSection(&g_lock);
     return id;
 }
+
+int au_buffer_create(const AuFormat *f, int is3d) { return create_voice(f, is3d, 0); }
 
 void au_buffer_data(int id, const uint8_t *data, uint32_t bytes) {
     EnterCriticalSection(&g_lock);
@@ -341,6 +352,102 @@ void au_buffer_distances(int id, float min, float max) {
         spatialize(v);
     }
     LeaveCriticalSection(&g_lock);
+}
+
+/* ---- streams ------------------------------------------------------------------------ */
+/* Each packet is a host copy (ADPCM decoded) submitted as one XAudio2
+   buffer; its context comes back in OnBufferEnd once it has played, or was
+   flushed (the voice's generation moved on). The callbacks take no lock:
+   DestroyVoice holds it while it waits for them. */
+typedef struct { AuPacketDone done; void *ctx; uint8_t *pcm; LONG gen; } Packet;
+
+static void STDMETHODCALLTYPE cb_pass_start(IXAudio2VoiceCallback *t, UINT32 bytes) { (void)t; (void)bytes; }
+static void STDMETHODCALLTYPE cb_void(IXAudio2VoiceCallback *t) { (void)t; }
+static void STDMETHODCALLTYPE cb_buffer(IXAudio2VoiceCallback *t, void *p) { (void)t; (void)p; }
+static void STDMETHODCALLTYPE cb_error(IXAudio2VoiceCallback *t, void *p, HRESULT e) { (void)t; (void)p; fprintf(stderr, "audio: voice error %08lx\n", e); }
+static void STDMETHODCALLTYPE cb_buffer_end(IXAudio2VoiceCallback *t, void *p) {
+    Voice *v = ((Callback *)t)->v;
+    Packet *k = p;
+    k->done(k->ctx, k->gen != v->gen);
+    free(k->pcm);
+    free(k);
+    InterlockedDecrement(&v->queued);
+}
+static const IXAudio2VoiceCallbackVtbl k_stream_callbacks = {cb_pass_start, cb_void, cb_void, cb_buffer, cb_buffer_end, cb_buffer, cb_error};
+
+int au_stream_create(const AuFormat *f, int is3d) { return create_voice(f, is3d, 1); }
+
+int au_stream_submit(int id, const uint8_t *data, uint32_t bytes, AuPacketDone done, void *ctx) {
+    EnterCriticalSection(&g_lock);
+    Voice *v = get(id);
+    int ok = 0;
+    if (v && v->stream) {
+        uint32_t frames = frames_of(&v->f, bytes);
+        Packet *k = malloc(sizeof *k);
+        k->done = done; k->ctx = ctx; k->gen = v->gen;
+        k->pcm = malloc(frames * v->hf.nBlockAlign + 1);
+        if (v->f.tag == AU_FORMAT_XBOX_ADPCM) adpcm_decode(data, frames / 65, v->f.channels, (int16_t *)k->pcm);
+        else memcpy(k->pcm, data, frames * v->hf.nBlockAlign);
+        XAUDIO2_BUFFER b = {0};
+        b.AudioBytes = frames * v->hf.nBlockAlign;
+        b.pAudioData = k->pcm;
+        b.pContext = k;
+        InterlockedIncrement(&v->queued);
+        if (frames && SUCCEEDED(IXAudio2SourceVoice_SubmitSourceBuffer(v->voice, &b, NULL))) {
+            ok = 1;
+            if (!v->playing && !v->paused) { spatialize(v); IXAudio2SourceVoice_Start(v->voice, 0, XAUDIO2_COMMIT_NOW); v->playing = 1; }
+        } else {
+            InterlockedDecrement(&v->queued);
+            free(k->pcm);
+            free(k);
+        }
+    }
+    LeaveCriticalSection(&g_lock);
+    return ok;
+}
+
+/* drop what is queued: each packet comes back as flushed */
+static void stream_flush(Voice *v) {
+    InterlockedIncrement(&v->gen);
+    IXAudio2SourceVoice_FlushSourceBuffers(v->voice);
+}
+
+void au_stream_flush(int id) {
+    EnterCriticalSection(&g_lock);
+    Voice *v = get(id);
+    if (v && v->stream) stream_flush(v);
+    LeaveCriticalSection(&g_lock);
+}
+
+void au_stream_pause(int id, int pause) {
+    EnterCriticalSection(&g_lock);
+    Voice *v = get(id);
+    if (v && v->stream && v->paused != pause) {
+        v->paused = pause;
+        if (pause && v->playing) { IXAudio2SourceVoice_Stop(v->voice, 0, XAUDIO2_COMMIT_NOW); v->playing = 0; }
+        else if (!pause) { spatialize(v); IXAudio2SourceVoice_Start(v->voice, 0, XAUDIO2_COMMIT_NOW); v->playing = 1; }
+    }
+    LeaveCriticalSection(&g_lock);
+}
+
+int au_stream_busy(int id) {
+    Voice *v = id > 0 && id <= VOICES ? &g_v[id - 1] : NULL;
+    return v && v->used && v->queued > 0;
+}
+
+/* flushed packets come back on the next processing passes; wait for them
+   (briefly) so none is left pending in the game's eyes */
+void au_stream_free(int id) {
+    EnterCriticalSection(&g_lock);
+    Voice *v = get(id);
+    if (v && v->stream) {
+        IXAudio2SourceVoice_Stop(v->voice, 0, XAUDIO2_COMMIT_NOW);
+        stream_flush(v);
+        if (!v->playing) IXAudio2SourceVoice_Start(v->voice, 0, XAUDIO2_COMMIT_NOW); /* buffers are released by processing passes */
+        for (int i = 0; i < 100 && v->queued > 0; i++) Sleep(2);
+    }
+    LeaveCriticalSection(&g_lock);
+    au_buffer_free(id);
 }
 
 void au_listener(const float *position, const float *front, const float *top) {
