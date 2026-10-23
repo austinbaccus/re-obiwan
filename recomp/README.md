@@ -57,6 +57,16 @@ is a translation of the game's code.
   `obiwan.exe` is the same fixed-address loader as the test harness, grown
   to cover all 64 MB of guest RAM.
 
+- **Renderer** (`host/render*.c`): `hooks_d3d.c` keeps the guest's D3D8
+  objects and hands the device state and draws to `render.h`. The default
+  backend is Direct3D 11 (`render_d3d11.c`): the game's shaders are its
+  source translated to SM4 HLSL (`shader_xlate.c`), and draws that use the
+  fixed-function pipeline get shaders generated from the texture stage and
+  transform states, cached by state. `RECOMP_RENDERER=d3d9` selects the
+  Direct3D 9 backend it was ported from (`render_d3d9.c`), kept as the
+  reference; `render_common.c` holds what both share (texture formats and
+  swizzling, vertex formats, the Xbox state encodings).
+
 ## Running it
 
 ```powershell
@@ -103,6 +113,17 @@ next to the executable. Environment switches for unattended runs:
   data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.
 - `RECOMP_SHOT="900,1200"`: save the back buffer as `build\shot_<frame>.bmp`
   at those frames (works with the window hidden or covered).
+- `RECOMP_FIXEDFPS=60`: the guest's clocks advance 1/60 s per presented
+  frame (and with the host's while nothing is presented, as when loading),
+  so a frame number shows the same moment however fast the host runs.
+  Comparing renderers: run the same script with `RECOMP_RENDERER=d3d9` and
+  without, and diff the shots (levels match; the intro, which waits on
+  loading threads, does not quite).
+- `RECOMP_RENDERER=d3d9`: the Direct3D 9 reference renderer.
+  `RECOMP_D3DDEBUG=1`: Direct3D 11 debug layer, its messages on stderr
+  (needs the Graphics Tools optional feature). `RECOMP_SHADERLOG=1`: print
+  each generated fixed-function shader. `RECOMP_NOVSYNC=1`: present
+  without waiting for vertical sync.
 - `RECOMP_STATELOG=frame`: print the device state (blending, stage
   operations, where the first vertex lands on screen) behind every draw of
   that frame.

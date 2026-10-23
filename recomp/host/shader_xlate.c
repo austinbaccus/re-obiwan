@@ -27,9 +27,11 @@ typedef struct {
     uint32_t inputs;
     int depth, failed;
     char msg[200];
+    int sm4;                  /* XS_SM4: Direct3D 11 */
     /* pixel shaders */
     int ps, final_written, final_fog, m3_rows;
     uint8_t sampler[4];       /* 0 unused, 1 2D, 2 cube */
+    uint32_t depth_stages;    /* SM4: stages that sample a depth texture through a compare */
 } Xs;
 
 static void fail(Xs *x, const char *fmt, ...) {
@@ -273,8 +275,9 @@ static void instruction(Xs *x, char *line) {
    sum (r0 + v1). Source modifiers 1-x, -x, _bias, _bx2, _sat; selectors .a
    .b .rgb; instruction modifiers _x2 _x4 _d2 _sat; register writes clamp to
    [-1, 1] as the combiners do. The final combiner "xfc A,B,C,D,E,F,G" gives
-   rgb = A*B + (1-A)*C + D and alpha G; without one the output is r0. Fog is
-   left to the device: fog.a reads as 1 (no fog), fog.rgb as 0. */
+   rgb = A*B + (1-A)*C + D and alpha G; without one the output is r0. For
+   SM2 fog is left to the device: fog.a reads as 1 (no fog), fog.rgb as 0;
+   SM4 shaders fog themselves, fog being the fog colour with the factor in a. */
 static int ps_source(Xs *x, const char *op, int alpha_dest, char *out, size_t cap) {
     char tmp[96];
     snprintf(tmp, sizeof tmp, "%s", op);
@@ -302,7 +305,7 @@ static int ps_source(Xs *x, const char *op, int alpha_dest, char *out, size_t ca
         else snprintf(base, sizeof base, "c[%d]", n);
     }
     else if (!strcmp(s, "zero")) strcpy(base, "float4(0, 0, 0, 0)");
-    else if (!strcmp(s, "fog")) strcpy(base, "float4(0, 0, 0, 1)");
+    else if (!strcmp(s, "fog")) strcpy(base, x->sm4 ? "fogreg" : "float4(0, 0, 0, 1)");
     else if (!strcmp(s, "prod")) strcpy(base, "prod");
     else if (!strcmp(s, "sum")) strcpy(base, "(r0 + v1)");
     else { fail(x, "unknown pixel shader register '%s'", s); return -1; }
@@ -350,7 +353,12 @@ static void ps_instruction(Xs *x, char *line) {
            stage's ALPHAKILL threshold (texels with alpha 0 drop the pixel) */
         if (!strcmp(opname, "tex")) {
             x->sampler[stage] = 1;
-            emit(x, "  t%d = tex2Dproj(s%d, tc%d * float4(texscale[%d].xyz, 1));\n", stage, stage, stage, stage);
+            if (!x->sm4) emit(x, "  t%d = tex2Dproj(s%d, tc%d * float4(texscale[%d].xyz, 1));\n", stage, stage, stage, stage);
+            else {
+                emit(x, "  p = tc%d * float4(texscale[%d].xyz, 1);\n", stage, stage);
+                if (x->depth_stages & (1u << stage)) emit(x, "  t%d = tex%d.SampleCmpLevelZero(smp%d, p.xy / p.w, p.z / p.w).xxxx;\n", stage, stage, stage);
+                else emit(x, "  t%d = tex%d.Sample(smp%d, p.xy / p.w);\n", stage, stage, stage);
+            }
             emit(x, "  clip(t%d.a - texscale[%d].w);\n", stage, stage);
         }
         /* NV2A pass-through: s, t, r and q as a colour, clamped (DX8 on the PC
@@ -366,7 +374,8 @@ static void ps_instruction(Xs *x, char *line) {
             emit(x, "  m3.z = dot(tc%d.xyz, (%s).xyz);\n", stage, src);
             if (opname[7] == 'v')   /* reflect the eye vector (the rows' w) about the normal */
                 emit(x, "  e3 = float3(tc%d.w, tc%d.w, tc%d.w); m3 = 2 * m3 * dot(m3, e3) / dot(m3, m3) - e3;\n", stage - 2, stage - 1, stage);
-            emit(x, "  t%d = texCUBE(s%d, m3);\n", stage, stage);
+            if (x->sm4) emit(x, "  t%d = tex%d.Sample(smp%d, m3);\n", stage, stage, stage);
+            else emit(x, "  t%d = texCUBE(s%d, m3);\n", stage, stage);
             emit(x, "  clip(t%d.a - texscale[%d].w);\n", stage, stage);
         } else fail(x, "unsupported texture instruction '%s'", opname);
         return;
@@ -505,9 +514,18 @@ static void process_line(Xs *x, const char *raw) {
     else instruction(x, line);
 }
 
-static int translate(const char *src, size_t len, int ps, char *out, size_t cap, uint32_t *inputs, int *fog) {
+/* the vertex/pixel interface of the SM4 shaders (flat shading: the host
+   defines COLOR_INTERP as nointerpolation) */
+static const char SM4_VARYINGS[] =
+    "#ifndef COLOR_INTERP\n#define COLOR_INTERP\n#endif\n"
+    "struct VARYINGS { float4 pos : SV_Position; COLOR_INTERP float4 d0 : COLOR0; COLOR_INTERP float4 d1 : COLOR1;\n"
+    "  float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float fog : FOG; };\n";
+
+static int translate(const char *src, size_t len, int ps, int target, uint32_t depth_stages, char *out, size_t cap, uint32_t *inputs, int *fog) {
     Xs *x = calloc(1, sizeof *x);
     x->ps = ps;
+    x->sm4 = target == XS_SM4;
+    x->depth_stages = depth_stages;
     char *text = malloc(len + 1);
     memcpy(text, src, len);
     text[len] = 0;
@@ -541,6 +559,38 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
     if (x->failed) {
         snprintf(out, cap, "%s", x->msg);
         rc = -1;
+    } else if (ps && x->sm4) {
+        size_t o = 0;
+        o += snprintf(out + o, cap - o, "cbuffer psc : register(b0) { float4 c[8]; float4 texscale[4]; float4 fogcolor; float4 alphatest; };\n%s",
+                      SM4_VARYINGS);
+        for (int i = 0; i < 4; i++) {
+            if (!x->sampler[i]) continue;
+            if (x->sampler[i] == 2) o += snprintf(out + o, cap - o, "TextureCube tex%d : register(t%d);\n", i, i);
+            else if (depth_stages & (1u << i)) o += snprintf(out + o, cap - o, "Texture2D<float> tex%d : register(t%d);\n", i, i);
+            else o += snprintf(out + o, cap - o, "Texture2D tex%d : register(t%d);\n", i, i);
+            o += snprintf(out + o, cap - o, "%s smp%d : register(s%d);\n",
+                          x->sampler[i] == 1 && (depth_stages & (1u << i)) ? "SamplerComparisonState" : "SamplerState", i, i);
+        }
+        o += snprintf(out + o, cap - o,
+                      "float4 main(VARYINGS i) : SV_Target {\n"
+                      "  float4 v0 = i.d0, v1 = i.d1, tc0 = i.t0, tc1 = i.t1, tc2 = i.t2, tc3 = i.t3;\n"
+                      "  float4 fogreg = float4(fogcolor.rgb, saturate(i.fog));\n"
+                      "  float4 r0 = 0, r1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, res = 0, prod = 0, fin = 0, p = 0;\n"
+                      "  float3 m3 = 0, e3 = 0;\n");
+        if (o + x->body_len + 1024 > cap) { snprintf(out, cap, "HLSL too long"); rc = -1; }
+        else {
+            memcpy(out + o, x->body ? x->body : "", x->body_len);
+            o += x->body_len;
+            /* without a final combiner the default one fogs; then the alpha test
+               (alphatest: D3DCMP function, 0 when off, and the reference 0..255) */
+            if (x->final_written) o += snprintf(out + o, cap - o, "  fin = saturate(fin);\n");
+            else o += snprintf(out + o, cap - o, "  fin = saturate(r0); fin.rgb = lerp(fogreg.rgb, fin.rgb, fogreg.a);\n");
+            snprintf(out + o, cap - o,
+                     "  float a8 = round(fin.a * 255), ref = alphatest.y; int f = (int)alphatest.x;\n"
+                     "  if (f == 1 || (f == 2 && !(a8 < ref)) || (f == 3 && a8 != ref) || (f == 4 && a8 > ref) ||\n"
+                     "      (f == 5 && !(a8 > ref)) || (f == 6 && a8 == ref) || (f == 7 && a8 < ref)) discard;\n"
+                     "  return fin;\n}\n");
+        }
     } else if (ps) {
         size_t o = 0;
         o += snprintf(out + o, cap - o, "float4 c[8] : register(c0);\nfloat4 texscale[4] : register(c8);\n");
@@ -559,12 +609,14 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
         }
     } else {
         size_t o = 0;
-        o += snprintf(out + o, cap - o,
-                      "float4 c[96] : register(c0);\n"
-                      "float4 hostfog : register(c96);\n"
-                      "struct VS_OUT { float4 pos : POSITION; float4 d0 : COLOR0; float4 d1 : COLOR1;\n"
-                      "  float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float fog : FOG; };\n"
-                      "VS_OUT main(");
+        if (x->sm4) o += snprintf(out + o, cap - o, "cbuffer vsc : register(b0) { float4 c[96]; float4 hostfog; float4 hostpos; };\n%s"
+                                                    "#define VS_OUT VARYINGS\n", SM4_VARYINGS);
+        else o += snprintf(out + o, cap - o,
+                           "float4 c[96] : register(c0);\n"
+                           "float4 hostfog : register(c96);\n"
+                           "struct VS_OUT { float4 pos : POSITION; float4 d0 : COLOR0; float4 d1 : COLOR1;\n"
+                           "  float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float fog : FOG; };\n");
+        o += snprintf(out + o, cap - o, "VS_OUT main(");
         int first = 1;
         for (int i = 0; i < 16; i++)
             if (x->inputs & (1u << i)) { o += snprintf(out + o, cap - o, "%sfloat4 v%d : TEXCOORD%d", first ? "" : ", ", i, i); first = 0; }
@@ -574,19 +626,22 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
                       "  float4 oPos = float4(0, 0, 0, 1), oD0 = 1, oD1 = 0, oT0 = float4(0, 0, 0, 1), oT1 = float4(0, 0, 0, 1),\n"
                       "    oT2 = float4(0, 0, 0, 1), oT3 = float4(0, 0, 0, 1), oFog = 1, oPts = 0, oB0 = 0, oB1 = 0;\n"
                       "  int a0 = 0;\n");
-        if (o + x->body_len + 256 > cap) { snprintf(out, cap, "HLSL too long"); rc = -1; }
+        if (o + x->body_len + 512 > cap) { snprintf(out, cap, "HLSL too long"); rc = -1; }
         else {
             memcpy(out + o, x->body ? x->body : "", x->body_len);
             o += x->body_len;
-            snprintf(out + o, cap - o,
-                     /* oFog is a fog coordinate on the Xbox, a blend factor in Direct3D 9:
-                        apply the FOGTABLEMODE function (hostfog: start, end, density, mode) */
-                     "  float fc = abs(oFog.x), fog = 1.0;\n"
-                     "  if (hostfog.w == 3) fog = (hostfog.y - fc) / (hostfog.y - hostfog.x);\n"
-                     "  else if (hostfog.w == 1) fog = exp(-fc * hostfog.z);\n"
-                     "  else if (hostfog.w == 2) fog = exp(-(fc * hostfog.z) * (fc * hostfog.z));\n"
-                     "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = saturate(fog);\n"
-                     "  return o;\n}\n");
+            o += snprintf(out + o, cap - o,
+                          /* oFog is a fog coordinate on the Xbox, a blend factor in Direct3D 9:
+                             apply the FOGTABLEMODE function (hostfog: start, end, density, mode) */
+                          "  float fc = abs(oFog.x), fog = 1.0;\n"
+                          "  if (hostfog.w == 3) fog = (hostfog.y - fc) / (hostfog.y - hostfog.x);\n"
+                          "  else if (hostfog.w == 1) fog = exp(-fc * hostfog.z);\n"
+                          "  else if (hostfog.w == 2) fog = exp(-(fc * hostfog.z) * (fc * hostfog.z));\n"
+                          "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = saturate(fog);\n");
+            /* SM4: colours clamped as vs_2_0 outputs are, and Direct3D 9's pixel
+               centres (hostpos: the half-pixel offset in clip units) */
+            if (x->sm4) o += snprintf(out + o, cap - o, "  o.d0 = saturate(oD0); o.d1 = saturate(oD1); o.pos.xy += hostpos.xy * oPos.w;\n");
+            snprintf(out + o, cap - o, "  return o;\n}\n");
         }
     }
     if (inputs) *inputs = x->inputs;
@@ -597,12 +652,12 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
     return rc;
 }
 
-int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *inputs) {
-    return translate(src, len, 0, out, cap, inputs, NULL);
+int xs_vs_to_hlsl(const char *src, size_t len, int target, char *out, size_t cap, uint32_t *inputs) {
+    return translate(src, len, 0, target, 0, out, cap, inputs, NULL);
 }
 
-int xs_ps_to_hlsl(const char *src, size_t len, char *out, size_t cap, int *fog) {
-    return translate(src, len, 1, out, cap, NULL, fog);
+int xs_ps_to_hlsl(const char *src, size_t len, int target, uint32_t depth_stages, char *out, size_t cap, int *fog) {
+    return translate(src, len, 1, target, depth_stages, out, cap, NULL, fog);
 }
 
 int xs_is_pixel_shader(const char *src, size_t len) {

@@ -27,10 +27,12 @@ endif()
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     # The harness proper, loaded at a normal address.
     # hooks_xapi/kernel satisfy the hook_* symbols the generated code references
-    add_library(difftest_core SHARED tests/difftest.c host/hooks_xapi.c host/hooks_d3d.c host/render_d3d9.c host/shader_xlate.c host/hooks_dsound.c host/kernel.c)
+    set(RENDER_SOURCES host/render.c host/render_common.c host/render_d3d9.c host/render_d3d11.c host/shader_xlate.c)
+    set(RENDER_LIBS d3d9 d3d11 dxgi)
+    add_library(difftest_core SHARED tests/difftest.c host/hooks_xapi.c host/hooks_d3d.c ${RENDER_SOURCES} host/hooks_dsound.c host/kernel.c)
     target_include_directories(difftest_core PRIVATE host)
     target_compile_options(difftest_core PRIVATE /wd4996)
-    target_link_libraries(difftest_core PRIVATE guest shell32 user32 d3d9)
+    target_link_libraries(difftest_core PRIVATE guest shell32 user32 ${RENDER_LIBS})
     target_link_options(difftest_core PRIVATE /SAFESEH:NO)
     # The loader owns 0x00010000..0x0052D000 so the XBE can be mapped there.
     add_executable(difftest tests/loader.c)
@@ -45,9 +47,9 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC)
     target_compile_options(xs_check PRIVATE /wd4996)
 
     # The game itself: host kernel + hooks + recompiled code, entered the same way.
-    add_library(obiwan_core SHARED host/boot.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c host/render_d3d9.c host/shader_xlate.c host/hooks_dsound.c runtime/xbe_image.c)
+    add_library(obiwan_core SHARED host/boot.c host/kernel.c host/hooks_xapi.c host/hooks_d3d.c ${RENDER_SOURCES} host/hooks_dsound.c runtime/xbe_image.c)
     target_include_directories(obiwan_core PRIVATE host)
-    target_link_libraries(obiwan_core PRIVATE guest shell32 user32 dbghelp d3d9)
+    target_link_libraries(obiwan_core PRIVATE guest shell32 user32 dbghelp ${RENDER_LIBS})
     target_compile_options(obiwan_core PRIVATE /wd4996)
     target_link_options(obiwan_core PRIVATE /SAFESEH:NO)
     add_executable(obiwan tests/loader.c)

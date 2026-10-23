@@ -1,4 +1,5 @@
-/* Direct3D 9 implementation of render.h.
+/* Direct3D 9 implementation of render.h (RECOMP_RENDERER=d3d9): the first
+   host renderer, kept as the reference for render_d3d11.c.
 
    Xbox D3D8 state comes in three encodings (see docs/recomp/recompiler-notes.md
    and Cxbx-Reloaded's XbD3D8Types.h, which this follows):
@@ -23,9 +24,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RENDER_BACKEND d3d9
+#include "render_backend.h"
 #include "guest.h"
 #include "kernel.h"
 #include "render.h"
+#include "render_common.h"
 #include "shader_xlate.h"
 
 #pragma comment(lib, "d3d9.lib")
@@ -154,147 +158,32 @@ void r_resource_freed(uint32_t guest) {
     for (int s = 0; s < 4; s++) if (g_bound[s] == guest) { g_bound[s] = 0; g_stage_dirty = 1; }
 }
 
-static int is_linear(uint32_t fmt) {
-    return (fmt >= 0x10 && fmt <= 0x20) || fmt == 0x2E || fmt == 0x2F || fmt == 0x30 || fmt == 0x31 ||
-           (fmt >= 0x35 && fmt <= 0x37) || (fmt >= 0x3D && fmt <= 0x41);
-}
-static int bpp_of(uint32_t fmt) {
-    switch (fmt) {
-    case 0x00: case 0x01: case 0x0B: case 0x13: case 0x19: case 0x1B: case 0x1F: return 1;
-    case 0x02: case 0x03: case 0x04: case 0x05: case 0x10: case 0x11: case 0x1A: case 0x1C: case 0x1D: case 0x20:
-    case 0x27: case 0x28: case 0x29: case 0x2C: case 0x2D: case 0x30: case 0x31: case 0x32: case 0x35: case 0x37:
-    case 0x38: case 0x39: case 0x3D: case 0x3E: return 2;
-    default: return 4;
-    }
-}
-
-/* Xbox swizzle (Morton order with the bits of the larger dimension continuing
-   on their own); after Cxbx-Reloaded's EmuUnswizzleBox */
-static void unswizzle(const uint8_t *src, uint32_t w, uint32_t h, uint32_t bpp, uint8_t *dst, uint32_t dst_pitch) {
-    uint32_t mask_x = 0, mask_y = 0;
-    for (uint32_t i = 1, j = 1; i < w || i < h; i <<= 1) {
-        if (i < w) { mask_x |= j; j <<= 1; }
-        if (i < h) { mask_y |= j; j <<= 1; }
-    }
-    uint32_t y_bits = 0;
-    for (uint32_t y = 0; y < h; y++) {
-        uint32_t x_bits = 0;
-        uint8_t *row = dst + y * dst_pitch;
-        for (uint32_t x = 0; x < w; x++) {
-            memcpy(row + x * bpp, src + (x_bits | y_bits) * bpp, bpp);
-            x_bits = (x_bits - mask_x) & mask_x;
-        }
-        y_bits = (y_bits - mask_y) & mask_y;
-    }
-}
-
-/* one texel of any uncompressed Xbox format -> A8R8G8B8 */
-static uint32_t to_argb(uint32_t fmt, const uint8_t *p) {
-    uint32_t v16 = p[0] | (p[1] << 8);
-    switch (fmt) {
-    case 0x06: case 0x12: return RD32(p);
-    case 0x07: case 0x1E: return RD32(p) | 0xff000000u;
-    case 0x3A: case 0x3F: return (p[3] << 24) | (p[0] << 16) | (p[1] << 8) | p[2];          /* A8B8G8R8 */
-    case 0x3B: case 0x40: return (p[0] << 24) | (p[3] << 16) | (p[2] << 8) | p[1];          /* B8G8R8A8 */
-    case 0x3C: case 0x41: return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];          /* R8G8B8A8 */
-    case 0x05: case 0x11: { /* R5G6B5 */
-        uint32_t r = (v16 >> 11) & 31, g = (v16 >> 5) & 63, b = v16 & 31;
-        return 0xff000000u | ((r * 255 / 31) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 31);
-    }
-    case 0x02: case 0x10: case 0x03: case 0x1C: { /* A1R5G5B5 / X1R5G5B5 */
-        uint32_t a = (fmt == 0x03 || fmt == 0x1C || (v16 & 0x8000)) ? 255 : 0;
-        uint32_t r = (v16 >> 10) & 31, g = (v16 >> 5) & 31, b = v16 & 31;
-        return (a << 24) | ((r * 255 / 31) << 16) | ((g * 255 / 31) << 8) | (b * 255 / 31);
-    }
-    case 0x04: case 0x1D: { /* A4R4G4B4 */
-        uint32_t a = (v16 >> 12) & 15, r = (v16 >> 8) & 15, g = (v16 >> 4) & 15, b = v16 & 15;
-        return (a * 17 << 24) | (r * 17 << 16) | (g * 17 << 8) | (b * 17);
-    }
-    case 0x38: case 0x3D: { /* R5G5B5A1 */
-        uint32_t r = (v16 >> 11) & 31, g = (v16 >> 6) & 31, b = (v16 >> 1) & 31, a = (v16 & 1) ? 255 : 0;
-        return (a << 24) | ((r * 255 / 31) << 16) | ((g * 255 / 31) << 8) | (b * 255 / 31);
-    }
-    case 0x39: case 0x3E: { /* R4G4B4A4 */
-        uint32_t r = (v16 >> 12) & 15, g = (v16 >> 8) & 15, b = (v16 >> 4) & 15, a = v16 & 15;
-        return (a * 17 << 24) | (r * 17 << 16) | (g * 17 << 8) | (b * 17);
-    }
-    case 0x00: case 0x13: return 0xff000000u | (p[0] << 16) | (p[0] << 8) | p[0];          /* L8 */
-    case 0x19: case 0x1F: return (p[0] << 24) | 0xffffff;                                   /* A8 */
-    case 0x01: case 0x1B: return (p[0] << 24) | (p[0] << 16) | (p[0] << 8) | p[0];          /* AL8 */
-    case 0x1A: case 0x20: return (p[1] << 24) | (p[0] << 16) | (p[0] << 8) | p[0];          /* A8L8 */
-    case 0x0B: return 0xff000000u | (p[0] << 16) | (p[0] << 8) | p[0];                      /* P8: palette not applied */
-    default: return bpp_of(fmt) == 4 ? RD32(p) : (0xff000000u | v16);
-    }
-}
-
 static void upload(TexSlot *t) {
-    uint32_t w, h, fmt, pitch;
-    d3d_describe(t->guest, 0, &w, &h, &fmt, &pitch);
-    if (getenv("RECOMP_TEXLOG")) {
-        uint32_t f = RD32(MEM(t->guest + 0xC));
-        fprintf(stderr, "texture %08x: format reg %08x (%s, dims %u, fmt %02x, %ux%u, %u levels) data %08x size %08x\n", t->guest, f,
-                (f & 4) ? "cube" : "2d", (f >> 4) & 0xf, fmt, w, h, (f >> 16) & 0xf, RD32(MEM(t->guest + 4)), RD32(MEM(t->guest + 0x10)));
-    }
-    if (!w || !h || w > 4096 || h > 4096) return;
-    uint32_t data = RD32(MEM(t->guest + 4));
-    if (!data) return;
-    int dxt = fmt == 0x0C || fmt == 0x0E || fmt == 0x0F;
-    D3DFORMAT hostfmt = dxt ? (fmt == 0x0C ? D3DFMT_DXT1 : fmt == 0x0E ? D3DFMT_DXT3 : D3DFMT_DXT5) : D3DFMT_A8R8G8B8;
-    if (t->tex && (t->w != w || t->h != h || t->fmt != fmt)) { IDirect3DTexture9_Release(t->tex); t->tex = NULL; }
+    RcTex g;
+    if (!rc_texture(t->guest, &g)) return;
+    D3DFORMAT hostfmt = g.dxt ? (g.fmt == 0x0C ? D3DFMT_DXT1 : g.fmt == 0x0E ? D3DFMT_DXT3 : D3DFMT_DXT5) : D3DFMT_A8R8G8B8;
+    if (t->tex && (t->w != g.w || t->h != g.h || t->fmt != g.fmt)) { IDirect3DTexture9_Release(t->tex); t->tex = NULL; }
     if (!t->tex) {
-        if (FAILED(IDirect3DDevice9_CreateTexture(g_dev, w, h, 1, 0, hostfmt, D3DPOOL_MANAGED, &t->tex, NULL))) {
-            fprintf(stderr, "render: cannot create %ux%u texture (xbox format %02x)\n", w, h, fmt);
+        if (FAILED(IDirect3DDevice9_CreateTexture(g_dev, g.w, g.h, 1, 0, hostfmt, D3DPOOL_MANAGED, &t->tex, NULL))) {
+            fprintf(stderr, "render: cannot create %ux%u texture (xbox format %02x)\n", g.w, g.h, g.fmt);
             t->tex = NULL; t->dirty = 0;
             return;
         }
-        t->w = w; t->h = h; t->fmt = fmt;
+        t->w = g.w; t->h = g.h; t->fmt = g.fmt;
     }
-    const uint8_t *src = MEM(data);
-    /* the format code decides: given the real D3DSURFACE_DESC, the game lays
-       its bitmaps out to match their format codes (with zero sizes it had
-       written swizzled-format bitmaps as linear rows, #26) */
-    t->linear = is_linear(fmt) || d3d_has_linear_layout(t->guest);
+    t->linear = g.linear;
     D3DLOCKED_RECT lr;
     if (FAILED(IDirect3DTexture9_LockRect(t->tex, 0, &lr, NULL, 0))) return;
-    if (dxt) {
-        uint32_t bh = h < 4 ? 1 : h / 4;
-        for (uint32_t y = 0; y < bh; y++) memcpy((uint8_t *)lr.pBits + y * lr.Pitch, src + y * pitch, pitch);
+    if (g.dxt) {
+        uint32_t bh = g.h < 4 ? 1 : g.h / 4;
+        for (uint32_t y = 0; y < bh; y++) memcpy((uint8_t *)lr.pBits + y * lr.Pitch, g.src + y * g.pitch, g.pitch);
     } else {
-        uint32_t bpp = bpp_of(fmt);
-        uint8_t *lin = (uint8_t *)src;
-        uint8_t *tmp = NULL;
-        if (!t->linear && !getenv("RECOMP_RAWTEX")) { /* swizzled: straighten into a scratch copy first */
-            tmp = malloc(w * h * bpp);
-            unswizzle(src, w, h, bpp, tmp, w * bpp);
-            lin = tmp;
-            pitch = w * bpp;
-        }
-        for (uint32_t y = 0; y < h; y++) {
-            uint32_t *out = (uint32_t *)((uint8_t *)lr.pBits + y * lr.Pitch);
-            const uint8_t *in = lin + y * pitch;
-            for (uint32_t x = 0; x < w; x++) out[x] = to_argb(fmt, in + x * bpp);
-        }
-        free(tmp);
+        uint32_t *argb = malloc((size_t)g.w * g.h * 4);
+        rc_texture_argb(&g, argb);
+        for (uint32_t y = 0; y < g.h; y++) memcpy((uint8_t *)lr.pBits + y * lr.Pitch, argb + (size_t)y * g.w, g.w * 4);
+        free(argb);
     }
-    /* debugging: write the uploaded texels as a BMP, and the guest bytes raw;
-       RECOMP_DUMPTEX=1 for every texture, or a guest texture address */
-    const char *dump = getenv("RECOMP_DUMPTEX");
-    if (dump && (!strcmp(dump, "1") || strtoul(dump, NULL, 16) == t->guest)) {
-        char name[64];
-        snprintf(name, sizeof name, "build\\tex_%08x_%02x_%ux%u.raw", t->guest, fmt, w, h);
-        FILE *raw = fopen(name, "wb");
-        if (raw) { fwrite(src, 1, dxt ? pitch * (h < 4 ? 1 : h / 4) : w * h * bpp_of(fmt), raw); fclose(raw); }
-        snprintf(name, sizeof name, "build\\tex_%08x_%02x.bmp", t->guest, fmt);
-        FILE *f = fopen(name, "wb");
-        if (f) {
-            uint32_t rowbytes = w * 4, size = 54 + rowbytes * h;
-            uint8_t hdr[54] = {'B', 'M', size, size >> 8, size >> 16, size >> 24, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0,
-                               w, w >> 8, w >> 16, w >> 24, h, h >> 8, h >> 16, h >> 24, 1, 0, 32, 0};
-            fwrite(hdr, 1, 54, f);
-            for (int y = (int)h - 1; y >= 0; y--) fwrite((uint8_t *)lr.pBits + y * lr.Pitch, 1, rowbytes, f);
-            fclose(f);
-        }
-    }
+    rc_dump_texture(&g);
     IDirect3DTexture9_UnlockRect(t->tex, 0);
     t->dirty = 0;
 }
@@ -333,17 +222,6 @@ static DepthTex *depth_texture(uint32_t data, uint32_t w, uint32_t h, int create
         return d;
     }
     return NULL;
-}
-
-/* the NV2A compares shadow r in the depth buffer's own units; Direct3D 9
-   compares 0..1 */
-static float depth_unit_scale(uint32_t guest) {
-    switch ((RD32(MEM(guest + 0xC)) >> 8) & 0xff) {
-    case 0x2A: case 0x2E: return 1.0f / 16777215.0f;   /* D24S8 */
-    case 0x2C: case 0x30: return 1.0f / 65535.0f;      /* D16 */
-    case 0x2D: case 0x31: return 1.0f / 511.9375f;     /* F16: 0 .. 511.9375 */
-    default: return 1.0f;
-    }
 }
 
 /* z_kind: 0 no depth buffer, 1 the main one, 2 the depth texture at z_data */
@@ -402,7 +280,7 @@ static void apply_textures(void) {
         D3DMATRIX m;
         memcpy(&m, flags ? g_texmat[s] : identity, 64);
         if (linear) {
-            float sx = 1.0f / tw, sy = 1.0f / th, sz = d ? depth_unit_scale(g) : 1.0f;
+            float sx = 1.0f / tw, sy = 1.0f / th, sz = d ? rc_depth_unit_scale(g) : 1.0f;
             for (int r = 0; r < 4; r++) { m.m[r][0] *= sx; m.m[r][1] *= sy; m.m[r][2] *= sz; }
             if (!flags) flags = D3DTTFF_COUNT2;
         }
@@ -412,35 +290,6 @@ static void apply_textures(void) {
 }
 
 /* ---- state ------------------------------------------------------------------ */
-static uint32_t gl_cmp(uint32_t v) { return v >= 0x200 && v <= 0x207 ? v - 0x200 + 1 : D3DCMP_ALWAYS; }
-static uint32_t gl_blend(uint32_t v) {
-    switch (v) {
-    case 0: return D3DBLEND_ZERO; case 1: return D3DBLEND_ONE;
-    case 0x300: return D3DBLEND_SRCCOLOR; case 0x301: return D3DBLEND_INVSRCCOLOR;
-    case 0x302: return D3DBLEND_SRCALPHA; case 0x303: return D3DBLEND_INVSRCALPHA;
-    case 0x304: return D3DBLEND_DESTALPHA; case 0x305: return D3DBLEND_INVDESTALPHA;
-    case 0x306: return D3DBLEND_DESTCOLOR; case 0x307: return D3DBLEND_INVDESTCOLOR;
-    case 0x308: return D3DBLEND_SRCALPHASAT;
-    case 0x8001: return D3DBLEND_BLENDFACTOR; case 0x8002: return D3DBLEND_INVBLENDFACTOR;
-    default: return D3DBLEND_ONE;
-    }
-}
-static uint32_t gl_stencil_op(uint32_t v) {
-    switch (v) {
-    case 0x1E00: return D3DSTENCILOP_KEEP; case 0: return D3DSTENCILOP_ZERO; case 0x1E01: return D3DSTENCILOP_REPLACE;
-    case 0x1E02: return D3DSTENCILOP_INCRSAT; case 0x1E03: return D3DSTENCILOP_DECRSAT; case 0x150A: return D3DSTENCILOP_INVERT;
-    case 0x8507: return D3DSTENCILOP_INCR; case 0x8508: return D3DSTENCILOP_DECR;
-    default: return D3DSTENCILOP_KEEP;
-    }
-}
-static uint32_t gl_blendop(uint32_t v) {
-    switch (v) {
-    case 0x8006: return D3DBLENDOP_ADD; case 0x800A: return D3DBLENDOP_SUBTRACT; case 0x800B: return D3DBLENDOP_REVSUBTRACT;
-    case 0x8007: return D3DBLENDOP_MIN; case 0x8008: return D3DBLENDOP_MAX; default: return D3DBLENDOP_ADD;
-    }
-}
-static uint32_t xbox_cull(uint32_t v) { return v == 0x900 ? D3DCULL_CW : v == 0x901 ? D3DCULL_CCW : D3DCULL_NONE; }
-
 static void rs(D3DRENDERSTATETYPE s, uint32_t v) { if (g_dev) IDirect3DDevice9_SetRenderState(g_dev, s, v); }
 
 /* polygon offset (SOLIDOFFSETENABLE, POLYGONOFFSETZSLOPESCALE/ZOFFSET): the
@@ -481,13 +330,13 @@ void r_set_rs_simple(uint32_t method, uint32_t value) {
     offset_log:
         if (getenv("RECOMP_RSLOG")) fprintf(stderr, "polygon offset: fill %u slope %g units %g\n", g_polyoff.fill, g_polyoff.slope, g_polyoff.units);
         break;
-    case 0x354: rs(D3DRS_ZFUNC, gl_cmp(value)); break;
-    case 0x33C: g_atest.func = gl_cmp(value); rs(D3DRS_ALPHAFUNC, g_atest.func); break;
+    case 0x354: rs(D3DRS_ZFUNC, rc_gl_cmp(value)); break;
+    case 0x33C: g_atest.func = rc_gl_cmp(value); rs(D3DRS_ALPHAFUNC, g_atest.func); break;
     case 0x304: rs(D3DRS_ALPHABLENDENABLE, value != 0); break;
     case 0x300: g_atest.enable = value != 0; rs(D3DRS_ALPHATESTENABLE, g_atest.enable); break;
     case 0x340: g_atest.ref = value & 0xff; rs(D3DRS_ALPHAREF, g_atest.ref); break;
-    case 0x344: rs(D3DRS_SRCBLEND, gl_blend(value)); break;
-    case 0x348: rs(D3DRS_DESTBLEND, gl_blend(value)); break;
+    case 0x344: rs(D3DRS_SRCBLEND, rc_gl_blend(value)); break;
+    case 0x348: rs(D3DRS_DESTBLEND, rc_gl_blend(value)); break;
     case 0x35C: rs(D3DRS_ZWRITEENABLE, value != 0); break;
     case 0x310: rs(D3DRS_DITHERENABLE, value != 0); break;
     case 0x37C: rs(D3DRS_SHADEMODE, value == 0x1D00 ? D3DSHADE_FLAT : D3DSHADE_GOURAUD); break;
@@ -495,30 +344,17 @@ void r_set_rs_simple(uint32_t method, uint32_t value) {
         rs(D3DRS_COLORWRITEENABLE, ((value & 1) ? D3DCOLORWRITEENABLE_BLUE : 0) | ((value & 0x100) ? D3DCOLORWRITEENABLE_GREEN : 0) |
                                    ((value & 0x10000) ? D3DCOLORWRITEENABLE_RED : 0) | ((value & 0x1000000) ? D3DCOLORWRITEENABLE_ALPHA : 0));
         break;
-    case 0x374: rs(D3DRS_STENCILZFAIL, gl_stencil_op(value)); break;
-    case 0x378: rs(D3DRS_STENCILPASS, gl_stencil_op(value)); break;
-    case 0x364: rs(D3DRS_STENCILFUNC, gl_cmp(value)); break;
+    case 0x374: rs(D3DRS_STENCILZFAIL, rc_gl_stencil_op(value)); break;
+    case 0x378: rs(D3DRS_STENCILPASS, rc_gl_stencil_op(value)); break;
+    case 0x364: rs(D3DRS_STENCILFUNC, rc_gl_cmp(value)); break;
     case 0x368: rs(D3DRS_STENCILREF, value & 0xff); break;
     case 0x36C: rs(D3DRS_STENCILMASK, value & 0xff); break;
     case 0x360: rs(D3DRS_STENCILWRITEMASK, value & 0xff); break;
-    case 0x350: rs(D3DRS_BLENDOP, gl_blendop(value)); break;
+    case 0x350: rs(D3DRS_BLENDOP, rc_gl_blendop(value)); break;
     case 0x34C: rs(D3DRS_BLENDFACTOR, ((value >> 24) << 24) | ((value & 0xff) << 16) | (value & 0xff00) | ((value >> 16) & 0xff)); break;
     default: break; /* polygon offset, swath, depth clip, stipple: nothing to map */
     }
 }
-
-/* Xbox D3DRS indices of the deferred group in D3D8 3948: right after the 25
-   simple states (57..81; D3DDevice_SetRenderState at 0x3690c0 sends states
-   below 82 to the simple setter and writes 82..115 into D3D_g_RenderState).
-   The values are the game's own D3D8 values. */
-#define XRS_DEFERRED_FIRST 82
-#define XRS_DEFERRED_COUNT 34
-enum { XRS_FOGENABLE = XRS_DEFERRED_FIRST, XRS_FOGTABLEMODE, XRS_FOGSTART, XRS_FOGEND, XRS_FOGDENSITY, XRS_RANGEFOGENABLE,
-       XRS_WRAP0, XRS_WRAP1, XRS_WRAP2, XRS_WRAP3, XRS_LIGHTING, XRS_SPECULARENABLE, XRS_LOCALVIEWER, XRS_COLORVERTEX,
-       XRS_BACKSPECULARMATERIALSOURCE, XRS_BACKDIFFUSEMATERIALSOURCE, XRS_BACKAMBIENTMATERIALSOURCE, XRS_BACKEMISSIVEMATERIALSOURCE,
-       XRS_SPECULARMATERIALSOURCE, XRS_DIFFUSEMATERIALSOURCE, XRS_AMBIENTMATERIALSOURCE, XRS_EMISSIVEMATERIALSOURCE,
-       XRS_BACKAMBIENT, XRS_AMBIENT, XRS_POINTSIZE, XRS_POINTSIZE_MIN, XRS_POINTSPRITEENABLE, XRS_POINTSCALEENABLE,
-       XRS_POINTSCALE_A, XRS_POINTSCALE_B, XRS_POINTSCALE_C, XRS_POINTSIZE_MAX, XRS_PATCHEDGESTYLE, XRS_PATCHSEGMENTS };
 
 /* Fog: the NV2A turns a per-vertex fog coordinate (eye distance, or oFog from
    a vertex shader) into a factor with the FOGTABLEMODE function, and the
@@ -568,7 +404,7 @@ static void sync_deferred_states(void) {
     static uint32_t seen[XRS_DEFERRED_COUNT];
     static int primed;
     for (uint32_t i = 0; i < XRS_DEFERRED_COUNT; i++) {
-        uint32_t v = RD32(MEM(0x0037ac68 + 4 * (XRS_DEFERRED_FIRST + i)));
+        uint32_t v = RD32(MEM(XRS_STATE_ARRAY + 4 * (XRS_DEFERRED_FIRST + i)));
         if (primed && v == seen[i]) continue;
         seen[i] = v;
         if (getenv("RECOMP_RSLOG")) fprintf(stderr, "deferred state %u = %08x\n", XRS_DEFERRED_FIRST + i, v);
@@ -614,23 +450,10 @@ static void apply_fog(int ps_fog, int vertex_shader) {
 }
 
 void r_set_rs(uint32_t pc_state, uint32_t value) {
-    if (pc_state == D3DRS_CULLMODE) value = xbox_cull(value);
-    else if (pc_state == D3DRS_STENCILFAIL) value = gl_stencil_op(value);
+    if (pc_state == D3DRS_CULLMODE) value = rc_xbox_cull(value);
+    else if (pc_state == D3DRS_STENCILFAIL) value = rc_gl_stencil_op(value);
     else if (pc_state == D3DRS_ZENABLE) value = value ? D3DZB_TRUE : D3DZB_FALSE;
     rs(pc_state, value);
-}
-
-/* Xbox D3DTOP -> PC: equal up to BLENDDIFFUSEALPHA (12), reordered after
-   (per Cxbx-Reloaded) */
-static uint32_t xbox_top(uint32_t v) {
-    static const uint8_t pc[] = {0, D3DTOP_DISABLE, D3DTOP_SELECTARG1, D3DTOP_SELECTARG2, D3DTOP_MODULATE, D3DTOP_MODULATE2X,
-                                 D3DTOP_MODULATE4X, D3DTOP_ADD, D3DTOP_ADDSIGNED, D3DTOP_ADDSIGNED2X, D3DTOP_SUBTRACT,
-                                 D3DTOP_ADDSMOOTH, D3DTOP_BLENDDIFFUSEALPHA, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDTEXTUREALPHA,
-                                 D3DTOP_BLENDFACTORALPHA, D3DTOP_BLENDTEXTUREALPHAPM, D3DTOP_PREMODULATE,
-                                 D3DTOP_MODULATEALPHA_ADDCOLOR, D3DTOP_MODULATECOLOR_ADDALPHA, D3DTOP_MODULATEINVALPHA_ADDCOLOR,
-                                 D3DTOP_MODULATEINVCOLOR_ADDALPHA, D3DTOP_DOTPRODUCT3, D3DTOP_MULTIPLYADD, D3DTOP_LERP,
-                                 D3DTOP_BUMPENVMAP, D3DTOP_BUMPENVMAPLUMINANCE};
-    return v < sizeof pc && v ? pc[v] : D3DTOP_DISABLE;
 }
 
 /* Xbox D3DTSS indices of D3D8 3948 (XDK 3911): the stage operations come
@@ -641,11 +464,11 @@ void r_set_tss(uint32_t stage, uint32_t type, uint32_t value) {
     if (!g_dev || stage >= 4) return;
     if (g_drawlog > 0) fprintf(stderr, "tss stage %u type %u = %08x\n", stage, type, value);
     switch (type) {
-    case 0: g_stage_ops[stage][0] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, xbox_top(value)); break;
+    case 0: g_stage_ops[stage][0] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLOROP, rc_xbox_top(value)); break;
     case 1: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG0, value); break;
     case 2: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG1, value); break;
     case 3: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_COLORARG2, value); break;
-    case 4: g_stage_ops[stage][1] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, xbox_top(value)); break;
+    case 4: g_stage_ops[stage][1] = value; IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAOP, rc_xbox_top(value)); break;
     case 5: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG0, value); break;
     case 6: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG1, value); break;
     case 7: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_ALPHAARG2, value); break;
@@ -703,26 +526,6 @@ static uint32_t g_fvf, g_vs_handle, g_ps_handle;
 static uint32_t g_stream_vb, g_stream_stride;
 static int g_warned_vs;
 
-static uint32_t fvf_stride(uint32_t fvf) {
-    uint32_t n = 0;
-    switch (fvf & 0xE) {
-    case 0x2: n = 12; break;                           /* XYZ */
-    case 0x4: n = 16; break;                           /* XYZRHW */
-    case 0x6: n = 16; break; case 0x8: n = 20; break;  /* XYZB1..B4 */
-    case 0xA: n = 24; break; case 0xC: n = 28; break;
-    }
-    if (fvf & 0x10) n += 12;  /* normal */
-    if (fvf & 0x20) n += 4;   /* point size */
-    if (fvf & 0x40) n += 4;   /* diffuse */
-    if (fvf & 0x80) n += 4;   /* specular */
-    uint32_t tc = (fvf >> 8) & 0xf;
-    for (uint32_t i = 0; i < tc; i++) {
-        uint32_t sz = (fvf >> (16 + i * 2)) & 3; /* 0: 2 floats, 1: 3, 2: 4, 3: 1 */
-        n += sz == 0 ? 8 : sz == 1 ? 12 : sz == 2 ? 16 : 4;
-    }
-    return n;
-}
-
 /* ---- programmable vertex shaders --------------------------------------------- */
 /* The game's shader source becomes HLSL (shader_xlate.c), compiled for vs_2_0
    on first use. The Xbox vertex declaration describes stream 0 in packed
@@ -730,11 +533,10 @@ static uint32_t fvf_stride(uint32_t fvf) {
    draw expands the vertices it touches to one float4 per shader input, read
    through TEXCOORDn. */
 typedef HRESULT(WINAPI *D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const void *, void *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
-typedef struct { uint8_t reg, type; uint16_t offset; } VElem;
 typedef struct {
     uint32_t handle;
     char *src; size_t len;
-    VElem elems[16]; int nelems;
+    RcVElem elems[16]; int nelems;
     IDirect3DVertexShader9 *vs;
     IDirect3DVertexDeclaration9 *decl;
     uint8_t regs[16]; int nregs;         /* shader inputs, in host vertex order */
@@ -745,42 +547,6 @@ static VShader g_vshaders[VSHADERS];
 static VShader *g_vsh;                   /* the bound shader, NULL for FVF */
 static float g_vsc[96][4];               /* constants c0..c95 */
 
-static uint32_t vsdt_size(uint32_t type) {
-    switch (type) {
-    case 0x12: return 4;  case 0x22: return 8;  case 0x32: return 12; case 0x42: return 16;  /* FLOAT1..4 */
-    case 0x40: return 4;  case 0x16: return 4;  case 0x72: return 12;                         /* D3DCOLOR, NORMPACKED3, FLOAT2H */
-    case 0x11: return 2;  case 0x21: return 4;  case 0x31: return 6;  case 0x41: return 8;   /* NORMSHORT1..4 */
-    case 0x15: return 2;  case 0x25: return 4;  case 0x35: return 6;  case 0x45: return 8;   /* SHORT1..4 */
-    case 0x14: return 1;  case 0x24: return 2;  case 0x34: return 3;  case 0x44: return 4;   /* PBYTE1..4 */
-    case 0x02: return 0;                                                                      /* NONE */
-    default: return 0xffff;
-    }
-}
-
-/* one element of an Xbox vertex as float4, missing components (0, 0, 0, 1) */
-static void vsdt_fetch(uint32_t type, const uint8_t *p, float *o) {
-    o[0] = o[1] = o[2] = 0; o[3] = 1;
-    uint32_t n = (type >> 4) & 0xf;
-    switch (type & 0xf) {
-    case 0x2:
-        if (type == 0x72) { memcpy(o, p, 8); memcpy(o + 3, p + 8, 4); break; }   /* FLOAT2H: x, y, w */
-        memcpy(o, p, 4 * n);
-        break;
-    case 0x0: /* D3DCOLOR: B, G, R, A in memory */
-        o[0] = p[2] / 255.0f; o[1] = p[1] / 255.0f; o[2] = p[0] / 255.0f; o[3] = p[3] / 255.0f;
-        break;
-    case 0x6: { /* NORMPACKED3: signed 11:11:10 */
-        uint32_t v; memcpy(&v, p, 4);
-        int x = (int)(v << 21) >> 21, y = (int)(v << 10) >> 21, z = (int)v >> 22;
-        o[0] = x / 1023.0f; o[1] = y / 1023.0f; o[2] = z / 511.0f;
-        break;
-    }
-    case 0x1: for (uint32_t i = 0; i < n; i++) { int16_t s; memcpy(&s, p + 2 * i, 2); o[i] = s / 32767.0f; } break;
-    case 0x5: for (uint32_t i = 0; i < n; i++) { int16_t s; memcpy(&s, p + 2 * i, 2); o[i] = s; } break;
-    case 0x4: for (uint32_t i = 0; i < n; i++) o[i] = p[i] / 255.0f; break;
-    }
-}
-
 void r_create_vertex_shader(uint32_t handle, const char *src, size_t len, const uint32_t *decl, int ndecl) {
     VShader *s = NULL;
     for (int i = 0; i < VSHADERS && !s; i++) if (!g_vshaders[i].handle) s = &g_vshaders[i];
@@ -790,20 +556,8 @@ void r_create_vertex_shader(uint32_t handle, const char *src, size_t len, const 
     s->src = malloc(len);
     memcpy(s->src, src, len);
     s->len = len;
-    /* Xbox D3DVSD tokens: STREAM (1 << 29 | n), STREAMDATA (2 << 29 | type << 16 | reg),
-       SKIP (2 << 29 | 0x10000000 | dwords << 16), END 0xFFFFFFFF */
-    uint32_t stream = 0, offset = 0;
-    for (int i = 0; i < ndecl && decl[i] != 0xFFFFFFFF; i++) {
-        uint32_t t = decl[i], kind = t >> 29;
-        if (kind == 1) { stream = t & 0xf; offset = 0; continue; }
-        if (kind != 2) { fprintf(stderr, "render: vertex declaration token %08x not handled\n", t); continue; }
-        if (t & 0x10000000) { offset += ((t >> 16) & 0xf) * 4; continue; }
-        uint32_t type = (t >> 16) & 0xff, size = vsdt_size(type);
-        if (size == 0xffff) { fprintf(stderr, "render: vertex data type %02x not handled\n", type); s->failed = 1; return; }
-        if (stream != 0) { fprintf(stderr, "render: vertex stream %u not handled\n", stream); s->failed = 1; return; }
-        if (s->nelems < 16) s->elems[s->nelems++] = (VElem){(uint8_t)(t & 0x1f), (uint8_t)type, (uint16_t)offset};
-        offset += size;
-    }
+    s->nelems = rc_parse_vertex_decl(decl, ndecl, s->elems, 16);
+    if (s->nelems < 0) { s->nelems = 0; s->failed = 1; }
 }
 
 void r_delete_vertex_shader(uint32_t handle) {
@@ -848,7 +602,7 @@ static int vshader_ready(VShader *s) {
     s->failed = 1;
     static char hlsl[1 << 17];
     uint32_t inputs = 0;
-    if (xs_vs_to_hlsl(s->src, s->len, hlsl, sizeof hlsl, &inputs)) {
+    if (xs_vs_to_hlsl(s->src, s->len, XS_SM2, hlsl, sizeof hlsl, &inputs)) {
         fprintf(stderr, "render: vertex shader %08x not translated: %s\n", s->handle, hlsl);
         return 0;
     }
@@ -938,15 +692,7 @@ static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t st
     uint32_t count = last - first + 1, vstride = 16 * g_vsh->nregs;
     static float *buf; static uint32_t cap;
     if (count * g_vsh->nregs * 4 > cap) { cap = count * g_vsh->nregs * 4; buf = realloc(buf, cap * sizeof *buf); }
-    for (uint32_t v = 0; v < count; v++) {
-        const uint8_t *src = verts + (size_t)(first + v) * stride;
-        for (int k = 0; k < g_vsh->nregs; k++) {
-            float *o = buf + (size_t)v * g_vsh->nregs * 4 + k * 4;
-            o[0] = o[1] = o[2] = 0; o[3] = 1;
-            for (int e = 0; e < g_vsh->nelems; e++)
-                if (g_vsh->elems[e].reg == g_vsh->regs[k]) vsdt_fetch(g_vsh->elems[e].type, src + g_vsh->elems[e].offset, o);
-        }
-    }
+    rc_expand_vertices(g_vsh->elems, g_vsh->nelems, g_vsh->regs, g_vsh->nregs, verts, stride, first, count, buf);
     apply_textures();
     apply_pixel_shader();
     {   /* RECOMP_SHADOWLOG=frame: the shadow-receiving draws of that frame:
@@ -1083,7 +829,7 @@ static int pshader_ready(PShader *s) {
     if (s->failed || !g_dev) return 0;
     s->failed = 1;
     static char hlsl[1 << 16];
-    if (xs_ps_to_hlsl(s->src, s->len, hlsl, sizeof hlsl, &s->fog)) {
+    if (xs_ps_to_hlsl(s->src, s->len, XS_SM2, 0, hlsl, sizeof hlsl, &s->fog)) {
         fprintf(stderr, "render: pixel shader %08x not translated: %s\n", s->handle, hlsl);
         return 0;
     }
@@ -1111,7 +857,7 @@ static void apply_pixel_shader(void) {
             if (!g_bound[s]) continue;
             DepthTex *d = depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0);
             TexSlot *t = d ? NULL : tex_find(g_bound[s], 0);
-            if (d) { scale[s][0] = 1.0f / d->w; scale[s][1] = 1.0f / d->h; scale[s][2] = depth_unit_scale(g_bound[s]); }
+            if (d) { scale[s][0] = 1.0f / d->w; scale[s][1] = 1.0f / d->h; scale[s][2] = rc_depth_unit_scale(g_bound[s]); }
             else if (t && t->tex && t->linear) { scale[s][0] = 1.0f / t->w; scale[s][1] = 1.0f / t->h; }
         }
         IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 8, &scale[0][0], 4);
@@ -1299,7 +1045,7 @@ static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride
 
 void r_draw(uint32_t prim, uint32_t start, uint32_t n) {
     if (!g_stream_vb) return;
-    uint32_t stride = g_stream_stride ? g_stream_stride : fvf_stride(g_fvf);
+    uint32_t stride = g_stream_stride ? g_stream_stride : rc_fvf_stride(g_fvf);
     uint32_t data = RD32(MEM(g_stream_vb + 4));
     if (!data) return;
     draw_up(prim, n, MEM(data + start * stride), stride);
@@ -1307,7 +1053,7 @@ void r_draw(uint32_t prim, uint32_t start, uint32_t n) {
 
 void r_draw_up(uint32_t prim, uint32_t n, uint32_t data, uint32_t stride) {
     if (!data) return;
-    draw_up(prim, n, MEM(data), stride ? stride : fvf_stride(g_fvf));
+    draw_up(prim, n, MEM(data), stride ? stride : rc_fvf_stride(g_fvf));
 }
 
 void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t base_vertex) {
@@ -1317,7 +1063,7 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
         if (!warned++) fprintf(stderr, "render: indexed draw with index data %08x skipped\n", index_data);
         return;
     }
-    uint32_t stride = g_stream_stride ? g_stream_stride : fvf_stride(g_fvf);
+    uint32_t stride = g_stream_stride ? g_stream_stride : rc_fvf_stride(g_fvf);
     uint32_t data = RD32(MEM(g_stream_vb + 4));
     if (!data) return;
     data += base_vertex * stride; /* SetIndices' BaseVertexIndex offsets every index */
@@ -1359,11 +1105,8 @@ void r_clear(uint32_t flags, uint32_t color, float z, uint32_t stencil) {
 /* RECOMP_SHOT="frame,frame,...": save the back buffer as build\shot_<frame>.bmp
    before those presents; works whether or not the window is on screen */
 static void shot(uint32_t frame) {
-    const char *list = getenv("RECOMP_SHOT"), *end = list ? strchr(list, '|') : NULL; /* '|': the next run's list */
-    for (const char *p = list; p && *p && (!end || p < end); p = strchr(p, ',') ? strchr(p, ',') + 1 : "")
-        if ((uint32_t)atoi(p) == frame) goto take;
-    return;
-take:;
+    char name[64];
+    if (!rc_shot_wanted(frame, name, sizeof name)) return;
     IDirect3DSurface9 *bb = NULL, *sys = NULL;
     D3DSURFACE_DESC d;
     D3DLOCKED_RECT lr;
@@ -1372,19 +1115,7 @@ take:;
     if (SUCCEEDED(IDirect3DDevice9_CreateOffscreenPlainSurface(g_dev, d.Width, d.Height, d.Format, D3DPOOL_SYSTEMMEM, &sys, NULL)) &&
         SUCCEEDED(IDirect3DDevice9_GetRenderTargetData(g_dev, bb, sys)) &&
         SUCCEEDED(IDirect3DSurface9_LockRect(sys, &lr, NULL, D3DLOCK_READONLY))) {
-        char name[64];
-        if (getenv("RECOMP_RUN")) snprintf(name, sizeof name, "build\\shot_%s_%u.bmp", getenv("RECOMP_RUN"), frame); /* a relaunched run */
-        else snprintf(name, sizeof name, "build\\shot_%u.bmp", frame);
-        FILE *f = fopen(name, "wb");
-        if (f) {
-            uint32_t w = d.Width, h = d.Height, size = 54 + w * 4 * h;
-            uint8_t hdr[54] = {'B', 'M', size, size >> 8, size >> 16, size >> 24, 0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0,
-                               w, w >> 8, w >> 16, w >> 24, h, h >> 8, h >> 16, h >> 24, 1, 0, 32, 0};
-            fwrite(hdr, 1, 54, f);
-            for (int y = (int)h - 1; y >= 0; y--) fwrite((uint8_t *)lr.pBits + y * lr.Pitch, 1, w * 4, f);
-            fclose(f);
-            fprintf(stderr, "render: saved %s\n", name);
-        }
+        if (rc_write_bmp(name, lr.pBits, lr.Pitch, d.Width, d.Height)) fprintf(stderr, "render: saved %s\n", name);
         IDirect3DSurface9_UnlockRect(sys);
     }
     if (sys) IDirect3DSurface9_Release(sys);
