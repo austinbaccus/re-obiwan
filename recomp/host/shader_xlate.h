@@ -16,7 +16,9 @@ int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *
    style). HLSL entry "main", target ps_2_0: constants c0..c7, samplers
    s0..s3 (2D, or cube for texm3x3 lookups), inputs COLOR0/1 and TEXCOORD0..3;
    c8..c11 scale each stage's coordinates (1/w, 1/h for linear textures,
-   which the Xbox addresses in texels, else 1). "tex" is projective.
+   which the Xbox addresses in texels, else 1), and their w is the stage's
+   ALPHAKILL threshold (a texel alpha below it drops the pixel; -1 when off).
+   "tex" is projective.
    *fog is 0 when the final combiner leaves fog out (the device must not fog). */
 int xs_ps_to_hlsl(const char *src, size_t len, char *out, size_t cap, int *fog);
 int xs_is_pixel_shader(const char *src, size_t len);

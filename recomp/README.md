@@ -115,7 +115,13 @@ next to the executable. Environment switches for unattended runs:
 - `RECOMP_RSLOG=1`: log each change of a deferred render state (D3D8 3948
   indices 82..115, read from `D3D_g_RenderState` before each draw).
 - `RECOMP_FOG=start,end,RRGGBB`: force linear fog on every draw, to check the
-  fog path in levels that do not enable fog themselves.
+  fog path in levels that do not enable fog themselves (draws multiplied into
+  the scene, such as soot decals, fade to white instead).
+- `RECOMP_PROBE=frame,x,y`: after each draw of that frame, report when the
+  back buffer pixel at (x, y) changes and what the draw was (which draw
+  paints an artefact).
+- `RECOMP_DUMPTEX=1` or a guest texture address: write uploaded textures as
+  `build\tex_*.bmp` plus the raw guest bytes.
 - Level select for tests: copy a `launch.last.bin` from a run that relaunched
   into a level, replace the level name at offset 7 (`L01_1`, `L02_1a`,
   `L03_2a`, `L04_3a`, `L05_1`, ...) and boot it with `RECOMP_LAUNCH`. The rest

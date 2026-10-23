@@ -276,7 +276,10 @@ static void upload(TexSlot *t) {
         }
         free(tmp);
     }
-    if (getenv("RECOMP_DUMPTEX")) { /* debugging: write the uploaded texels as a BMP, and the guest bytes raw */
+    /* debugging: write the uploaded texels as a BMP, and the guest bytes raw;
+       RECOMP_DUMPTEX=1 for every texture, or a guest texture address */
+    const char *dump = getenv("RECOMP_DUMPTEX");
+    if (dump && (!strcmp(dump, "1") || strtoul(dump, NULL, 16) == t->guest)) {
         char name[64];
         snprintf(name, sizeof name, "build\\tex_%08x_%02x_%ux%u.raw", t->guest, fmt, w, h);
         FILE *raw = fopen(name, "wb");
@@ -452,6 +455,20 @@ static void apply_polygon_offset(void) {
     rs(D3DRS_DEPTHBIAS, b);
 }
 
+/* alpha test as the game set it, and ALPHAKILL per texture stage (stage state
+   21): the NV2A drops a pixel whose texel alpha is 0. Direct3D 9 has no such
+   stage state: pixel shaders clip (texscale.w), and fixed-function draws get
+   an alpha test rejecting alpha 0 when the game has none of its own (their
+   alpha is the texel's, or that scaled by another input). */
+static struct { uint32_t enable, func, ref; } g_atest = {0, D3DCMP_ALWAYS, 0};
+static uint32_t g_alphakill[4];
+static void apply_alpha_test(int kill) {
+    int own = g_atest.enable || !kill;
+    rs(D3DRS_ALPHATESTENABLE, own ? g_atest.enable : TRUE);
+    rs(D3DRS_ALPHAFUNC, own ? g_atest.func : D3DCMP_GREATER);
+    rs(D3DRS_ALPHAREF, own ? g_atest.ref : 0);
+}
+
 void r_set_rs_simple(uint32_t method, uint32_t value) {
     /* the caller passes the push-buffer header (dword count in bits 18+,
        subchannel in 13..15), e.g. 0x40304 for ALPHABLENDENABLE */
@@ -465,10 +482,10 @@ void r_set_rs_simple(uint32_t method, uint32_t value) {
         if (getenv("RECOMP_RSLOG")) fprintf(stderr, "polygon offset: fill %u slope %g units %g\n", g_polyoff.fill, g_polyoff.slope, g_polyoff.units);
         break;
     case 0x354: rs(D3DRS_ZFUNC, gl_cmp(value)); break;
-    case 0x33C: rs(D3DRS_ALPHAFUNC, gl_cmp(value)); break;
+    case 0x33C: g_atest.func = gl_cmp(value); rs(D3DRS_ALPHAFUNC, g_atest.func); break;
     case 0x304: rs(D3DRS_ALPHABLENDENABLE, value != 0); break;
-    case 0x300: rs(D3DRS_ALPHATESTENABLE, value != 0); break;
-    case 0x340: rs(D3DRS_ALPHAREF, value & 0xff); break;
+    case 0x300: g_atest.enable = value != 0; rs(D3DRS_ALPHATESTENABLE, g_atest.enable); break;
+    case 0x340: g_atest.ref = value & 0xff; rs(D3DRS_ALPHAREF, g_atest.ref); break;
     case 0x344: rs(D3DRS_SRCBLEND, gl_blend(value)); break;
     case 0x348: rs(D3DRS_DESTBLEND, gl_blend(value)); break;
     case 0x35C: rs(D3DRS_ZWRITEENABLE, value != 0); break;
@@ -570,7 +587,17 @@ static void apply_fog(int ps_fog, int vertex_shader) {
         forced = f && sscanf(f, "%f,%f,%x", &s, &e, &col) == 3;
         if (forced) { g_fog_forced_color = 0xff000000u | col; g_fog.start = s; g_fog.end = e; }
     }
-    if (forced) { g_fog.enable = 1; g_fog.mode = 3; rs(D3DRS_FOGCOLOR, g_fog_forced_color); }
+    if (forced) {
+        /* multiplied into the scene (soot decals: DESTCOLOR, ZERO) a draw
+           fades to white, as a game sets it up, not to the fog colour */
+        DWORD blend = 0, src = 0, dst = 0;
+        IDirect3DDevice9_GetRenderState(g_dev, D3DRS_ALPHABLENDENABLE, &blend);
+        IDirect3DDevice9_GetRenderState(g_dev, D3DRS_SRCBLEND, &src);
+        IDirect3DDevice9_GetRenderState(g_dev, D3DRS_DESTBLEND, &dst);
+        int multiply = blend && ((src == D3DBLEND_DESTCOLOR && dst == D3DBLEND_ZERO) || (src == D3DBLEND_ZERO && dst == D3DBLEND_SRCCOLOR));
+        g_fog.enable = 1; g_fog.mode = 3;
+        rs(D3DRS_FOGCOLOR, multiply ? 0xffffffffu : g_fog_forced_color);
+    }
     int on = g_fog.enable && g_fog.mode && ps_fog;
     rs(D3DRS_FOGENABLE, on);
     if (!on) return;
@@ -633,7 +660,11 @@ void r_set_tss(uint32_t stage, uint32_t type, uint32_t value) {
     case 16: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MIPMAPLODBIAS, value); break;
     case 17: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXMIPLEVEL, 0); break;
     case 18: IDirect3DDevice9_SetSamplerState(g_dev, stage, D3DSAMP_MAXANISOTROPY, value ? value : 1); break;
-    /* 19 COLORKEYOP, 20 COLORSIGN, 21 ALPHAKILL: no Direct3D 9 equivalent */
+    /* 19 COLORKEYOP, 20 COLORSIGN: no Direct3D 9 equivalent */
+    case 21: /* applied with the pixel shader or alpha test */
+        if (getenv("RECOMP_RSLOG") && g_alphakill[stage] != value) fprintf(stderr, "alphakill: stage %u = %u (frame %u)\n", stage, value, g_frame);
+        g_alphakill[stage] = value;
+        break;
     case 22: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT00, value); break;
     case 23: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT01, value); break;
     case 24: IDirect3DDevice9_SetTextureStageState(g_dev, stage, D3DTSS_BUMPENVMAT11, value); break;
@@ -842,6 +873,46 @@ static int vshader_ready(VShader *s) {
 /* draw with the bound vertex shader: expand the guest vertices a draw
    touches (first..last) into float4 inputs, indices rebased to first */
 static D3DPRIMITIVETYPE prim_pc(uint32_t p, uint32_t n, uint32_t *count);
+/* RECOMP_PROBE=frame,x,y: after each draw of that frame that targets the back
+   buffer, report when the pixel at (x, y) changes and what the draw was */
+static void probe(void) {
+    static int frame = -1, px, py;
+    static uint32_t last, k, kframe;
+    static IDirect3DSurface9 *one, *sys;
+    if (frame < 0) {
+        const char *e = getenv("RECOMP_PROBE");
+        frame = 0;
+        if (e) sscanf(e, "%d,%d,%d", &frame, &px, &py);
+    }
+    if (!frame || g_frame + 1 != (uint32_t)frame) return;
+    if (kframe != g_frame + 1) { kframe = g_frame + 1; k = 0; last = 0xdeadbeef; }
+    k++;
+    IDirect3DSurface9 *rt = NULL, *bb = NULL;
+    IDirect3DDevice9_GetRenderTarget(g_dev, 0, &rt);
+    IDirect3DDevice9_GetBackBuffer(g_dev, 0, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
+    if (rt && rt == bb) {
+        if (!one) {
+            IDirect3DDevice9_CreateRenderTarget(g_dev, 1, 1, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &one, NULL);
+            IDirect3DDevice9_CreateOffscreenPlainSurface(g_dev, 1, 1, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, NULL);
+        }
+        RECT r = {px, py, px + 1, py + 1};
+        D3DLOCKED_RECT lr;
+        IDirect3DDevice9_EndScene(g_dev);
+        if (one && sys && SUCCEEDED(IDirect3DDevice9_StretchRect(g_dev, rt, &r, one, NULL, D3DTEXF_POINT)) &&
+            SUCCEEDED(IDirect3DDevice9_GetRenderTargetData(g_dev, one, sys)) && SUCCEEDED(IDirect3DSurface9_LockRect(sys, &lr, NULL, D3DLOCK_READONLY))) {
+            uint32_t c = *(const uint32_t *)lr.pBits & 0xffffff;
+            IDirect3DSurface9_UnlockRect(sys);
+            if (c != last)
+                fprintf(stderr, "probe: draw %u %06x -> %06x | vs %08x ps %08x fvf %03x tex %08x %08x %08x %08x\n", k, last & 0xffffff, c,
+                        g_vsh ? g_vsh->handle : 0, g_ps_handle, g_fvf, g_bound[0], g_bound[1], g_bound[2], g_bound[3]);
+            last = c;
+        }
+        IDirect3DDevice9_BeginScene(g_dev);
+    }
+    if (rt) IDirect3DSurface9_Release(rt);
+    if (bb) IDirect3DSurface9_Release(bb);
+}
+
 static void apply_textures(void);
 static void apply_pixel_shader(void);
 static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
@@ -945,6 +1016,7 @@ static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t st
             IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, t, 0, count, prims, ib, D3DFMT_INDEX16, buf, vstride);
         } else if (prims) IDirect3DDevice9_DrawPrimitiveUP(g_dev, t, prims, buf, vstride);
     }
+    probe();
 }
 
 void r_set_vertex_shader(uint32_t handle) {
@@ -1028,13 +1100,14 @@ static int pshader_ready(PShader *s) {
    the deferred render states and fog */
 static void apply_pixel_shader(void) {
     sync_deferred_states();
-    int ps_fog = 1;
+    int ps_fog = 1, kill = 0;
     if (g_psh && pshader_ready(g_psh)) {
         IDirect3DDevice9_SetPixelShader(g_dev, g_psh->ps);
         IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 0, &g_psc[0][0], 8);
         float scale[4][4];
-        for (int s = 0; s < 4; s++) {   /* texel coordinates for linear textures */
-            scale[s][0] = scale[s][1] = scale[s][2] = scale[s][3] = 1;
+        for (int s = 0; s < 4; s++) {   /* texel coordinates for linear textures; ALPHAKILL */
+            scale[s][0] = scale[s][1] = scale[s][2] = 1;
+            scale[s][3] = g_alphakill[s] ? 0.5f / 255 : -1;
             if (!g_bound[s]) continue;
             DepthTex *d = depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0);
             TexSlot *t = d ? NULL : tex_find(g_bound[s], 0);
@@ -1043,7 +1116,11 @@ static void apply_pixel_shader(void) {
         }
         IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 8, &scale[0][0], 4);
         ps_fog = g_psh->fog;
-    } else IDirect3DDevice9_SetPixelShader(g_dev, NULL);
+    } else {
+        IDirect3DDevice9_SetPixelShader(g_dev, NULL);
+        for (int s = 0; s < 4; s++) kill |= g_bound[s] && g_alphakill[s];
+    }
+    apply_alpha_test(kill);
     apply_fog(ps_fog, g_vsh != NULL);
 }
 
@@ -1075,9 +1152,9 @@ void r_set_stream(uint32_t stream, uint32_t vb, uint32_t stride) {
 #define STATE_BLOCKS 64
 typedef struct {
     IDirect3DStateBlock9 *sb;
-    uint32_t bound[4], texflags[4], stage_ops[4][2];
+    uint32_t bound[4], texflags[4], stage_ops[4][2], alphakill[4];
     float texmat[4][16];
-    uint32_t fvf, vs_handle, ps_handle, stream_vb, stream_stride;
+    uint32_t fvf, vs_handle, ps_handle, stream_vb, stream_stride, atest[3];
 } StateBlock;
 static StateBlock g_sb[STATE_BLOCKS];
 
@@ -1097,6 +1174,7 @@ void r_capture_state_block(uint32_t token) {
     IDirect3DStateBlock9_Capture(b->sb);
     memcpy(b->bound, g_bound, sizeof b->bound); memcpy(b->texflags, g_texflags, sizeof b->texflags);
     memcpy(b->stage_ops, g_stage_ops, sizeof b->stage_ops); memcpy(b->texmat, g_texmat, sizeof b->texmat);
+    memcpy(b->alphakill, g_alphakill, sizeof b->alphakill); memcpy(b->atest, &g_atest, sizeof b->atest);
     b->fvf = g_fvf; b->vs_handle = g_vs_handle; b->ps_handle = g_ps_handle;
     b->stream_vb = g_stream_vb; b->stream_stride = g_stream_stride;
 }
@@ -1106,6 +1184,7 @@ void r_apply_state_block(uint32_t token) {
     IDirect3DStateBlock9_Apply(b->sb);
     memcpy(g_bound, b->bound, sizeof g_bound); memcpy(g_texflags, b->texflags, sizeof g_texflags);
     memcpy(g_stage_ops, b->stage_ops, sizeof g_stage_ops); memcpy(g_texmat, b->texmat, sizeof g_texmat);
+    memcpy(g_alphakill, b->alphakill, sizeof g_alphakill); memcpy(&g_atest, b->atest, sizeof g_atest);
     g_fvf = b->fvf; g_vs_handle = b->vs_handle; g_ps_handle = b->ps_handle;
     g_stream_vb = b->stream_vb; g_stream_stride = b->stream_stride;
     g_vsh = NULL;
@@ -1209,11 +1288,13 @@ static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride
             idx[q * 6 + 3] = b; idx[q * 6 + 4] = b + 2; idx[q * 6 + 5] = b + 3;
         }
         IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, D3DPT_TRIANGLELIST, 0, quads * 4, quads * 2, idx, D3DFMT_INDEX16, data, stride);
+        probe();
         return;
     }
     uint32_t count;
     D3DPRIMITIVETYPE t = prim_pc(prim, n, &count);
     if (count) IDirect3DDevice9_DrawPrimitiveUP(g_dev, t, count, data, stride);
+    probe();
 }
 
 void r_draw(uint32_t prim, uint32_t start, uint32_t n) {
@@ -1258,9 +1339,11 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
             tri[q * 6 + 3] = s[0]; tri[q * 6 + 4] = s[2]; tri[q * 6 + 5] = s[3];
         }
         IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, D3DPT_TRIANGLELIST, 0, maxv + 1, quads * 2, tri, D3DFMT_INDEX16, MEM(data), stride);
+        probe();
         return;
     }
     if (count) IDirect3DDevice9_DrawIndexedPrimitiveUP(g_dev, t, 0, maxv + 1, count, idx, D3DFMT_INDEX16, MEM(data), stride);
+    probe();
 }
 
 /* ---- frame ------------------------------------------------------------------ */

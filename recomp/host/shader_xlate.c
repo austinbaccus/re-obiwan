@@ -346,10 +346,12 @@ static void ps_instruction(Xs *x, char *line) {
         if (n >= 2 && ps_source(x, ops[1], 0, src, sizeof src)) return;
         /* NV2A "project2d": s/q, t/q, and for a depth texture the r/q compare;
            texscale: 1/w, 1/h for linear textures (texel coordinates) and, for
-           depth textures, r from depth buffer units to 0..1 */
+           depth textures, r from depth buffer units to 0..1; its w is the
+           stage's ALPHAKILL threshold (texels with alpha 0 drop the pixel) */
         if (!strcmp(opname, "tex")) {
             x->sampler[stage] = 1;
             emit(x, "  t%d = tex2Dproj(s%d, tc%d * float4(texscale[%d].xyz, 1));\n", stage, stage, stage, stage);
+            emit(x, "  clip(t%d.a - texscale[%d].w);\n", stage, stage);
         }
         /* NV2A pass-through: s, t, r and q as a colour, clamped (DX8 on the PC
            gives alpha 1; the shadow receiver fades by its q) */
@@ -365,6 +367,7 @@ static void ps_instruction(Xs *x, char *line) {
             if (opname[7] == 'v')   /* reflect the eye vector (the rows' w) about the normal */
                 emit(x, "  e3 = float3(tc%d.w, tc%d.w, tc%d.w); m3 = 2 * m3 * dot(m3, e3) / dot(m3, m3) - e3;\n", stage - 2, stage - 1, stage);
             emit(x, "  t%d = texCUBE(s%d, m3);\n", stage, stage);
+            emit(x, "  clip(t%d.a - texscale[%d].w);\n", stage, stage);
         } else fail(x, "unsupported texture instruction '%s'", opname);
         return;
     }
