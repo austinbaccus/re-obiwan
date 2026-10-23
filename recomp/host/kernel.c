@@ -256,6 +256,7 @@ typedef struct {
     uint32_t guest_obj; /* guest address of a KTHREAD / KEVENT this handle refers to */
     char *dir_pattern;  /* pending NtQueryDirectoryFile pattern */
     int dir_started;
+    int delete_on_close;/* FILE_DELETE_ON_CLOSE or FileDispositionInformation */
 } Obj;
 #define MAX_HANDLES 1024
 static Obj g_objs[MAX_HANDLES];
@@ -1020,6 +1021,18 @@ K(XcSHAFinal) {
 }
 
 /* ---- files -------------------------------------------------------------- */
+static int dir_empty(const char *path) {
+    char spec[MAX_PATH];
+    WIN32_FIND_DATAA fd;
+    snprintf(spec, sizeof spec, "%s\\*", path);
+    HANDLE f = FindFirstFileA(spec, &fd);
+    if (f == INVALID_HANDLE_VALUE) return 1;
+    int empty = 1;
+    do if (strcmp(fd.cFileName, ".") && strcmp(fd.cFileName, "..")) { empty = 0; break; } while (FindNextFileA(f, &fd));
+    FindClose(f);
+    return empty;
+}
+
 static uint32_t fill_network_open_info(Obj *o, uint32_t info) {
     BY_HANDLE_FILE_INFORMATION fi = {0};
     WIN32_FILE_ATTRIBUTE_DATA ad = {0};
@@ -1093,7 +1106,7 @@ static void nt_open(Ctx *ctx, int create, int nargs) {
             if (access & 0x0004) da |= FILE_APPEND_DATA;
             if (access & 0x0080) da |= FILE_READ_ATTRIBUTES;
             if (!da) da = GENERIC_READ;
-            HANDLE hf = CreateFileA(path, da, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, cd, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE hf = CreateFileA(path, da, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, cd, FILE_ATTRIBUTE_NORMAL, NULL);
             if (hf == INVALID_HANDLE_VALUE) {
                 DWORD e = GetLastError();
                 st = e == ERROR_FILE_EXISTS ? STATUS_OBJECT_NAME_COLLISION_
@@ -1106,6 +1119,7 @@ static void nt_open(Ctx *ctx, int create, int nargs) {
             }
         }
     }
+    if (h && (options & 0x1000)) handle_get(h)->delete_on_close = 1; /* FILE_DELETE_ON_CLOSE */
     trace("%s %s -> host %s : %08x handle %x", create ? "NtCreateFile" : "NtOpenFile", name, path, st, h);
     if ((int32_t)st < 0 && getenv("RECOMP_FILELOG")) fprintf(stderr, "file: %s %s -> %s failed %08x\n", create ? "create" : "open", name, path, st);
     if (phandle) WR32(MEM(phandle), h);
@@ -1119,6 +1133,12 @@ K(NtClose) {
     Obj *o = handle_get(h);
     if (!o) RET(STATUS_INVALID_HANDLE_, 1);
     if (o->host && (o->kind == OBJ_FILE || o->kind == OBJ_EVENT || o->kind == OBJ_THREAD)) CloseHandle(o->host);
+    if (o->host && o->kind == OBJ_DIR) FindClose(o->host); /* NtQueryDirectoryFile's search */
+    if (o->delete_on_close) {
+        BOOL ok = o->kind == OBJ_DIR ? RemoveDirectoryA(o->path) : DeleteFileA(o->path);
+        trace("  delete %s: %s", o->path, ok ? "ok" : "failed");
+        if (getenv("RECOMP_FILELOG")) fprintf(stderr, "file: delete %s%s\n", o->path, ok ? "" : " failed");
+    }
     free(o->dir_pattern);
     o->kind = OBJ_FREE;
     RET(STATUS_SUCCESS_, 1);
@@ -1213,7 +1233,10 @@ K(NtSetInformationFile) {
             SetFilePointerEx(o->host, li, NULL, FILE_BEGIN); SetEndOfFile(o->host); SetFilePointerEx(o->host, cur, NULL, FILE_BEGIN); }
         break;
     case 4: break;  /* FileBasicInformation: attributes; ignore */
-    case 13: break; /* FileDispositionInformation: delete on close */
+    case 13: /* FileDispositionInformation: delete when the handle is closed; a directory must be empty */
+        if (RD8(MEM(info)) && o->kind == OBJ_DIR && !dir_empty(o->path)) st = STATUS_DIRECTORY_NOT_EMPTY_;
+        else o->delete_on_close = RD8(MEM(info)) != 0;
+        break;
     default: trace("NtSetInformationFile class %u not handled", cls); break;
     }
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), 0); }
