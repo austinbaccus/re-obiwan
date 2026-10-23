@@ -68,7 +68,9 @@ HOOK(XapiInitAutoPowerDown) { RET_CDECL(ctx); }
 /* Windows XInput controllers 0..3 are Xbox ports 0..3. Port 0 is always
    present: the keyboard and RECOMP_INPUT scripts drive it too. Plugging and
    unplugging reach the game as XGetDeviceChanges insertions and removals
-   (XBoxGenerator::vf01 opens and closes its pads on them). */
+   (XBoxGenerator::vf01 opens and closes its pads on them). A scripted run
+   (RECOMP_INPUT) ignores the controllers and the keyboard, so a test is not
+   disturbed by someone playing at the same time. */
 #define XDEVICE_TYPE_GAMEPAD 0x003b4fa0 /* the gamepad entry of XAPI's device type table */
 typedef DWORD(WINAPI *XInputGetStateFn)(DWORD, XINPUT_STATE *);
 typedef DWORD(WINAPI *XInputSetStateFn)(DWORD, XINPUT_VIBRATION *);
@@ -80,6 +82,7 @@ static uint32_t g_reported; /* the ports the game has been told about */
 static void xinput_load(void) {
     static int done;
     if (done++) return;
+    if (getenv("RECOMP_INPUT")) { fprintf(stderr, "input: scripted run, controllers and keyboard ignored\n"); return; }
     const char *const dlls[] = {"xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"};
     for (int i = 0; i < 3 && !host_get_state; i++) {
         HMODULE m = LoadLibraryA(dlls[i]);
@@ -231,7 +234,7 @@ HOOK(XInputGetState) {
         /* keyboard: arrows = left stick, Enter = A, Space = B, Esc = START,
            Backspace = BACK; only while the game window has focus
            (GetAsyncKeyState sees keys typed anywhere) */
-        if (r_has_focus()) {
+        if (r_has_focus() && !getenv("RECOMP_INPUT")) {
             if (GetAsyncKeyState(VK_LEFT) & 0x8000) lx = -32000;
             if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
             if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;

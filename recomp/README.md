@@ -117,9 +117,12 @@ next to the executable. Environment switches for unattended runs:
   print every guest thread's guest and host stack (three samples, then exit).
 - `RECOMP_INPUT="300:START,700:A,1950:LSUP:900"`: press a gamepad button for
   10 frames (or the given count) at those frame numbers (the attract loop
-  only ends on START); LSUP/LSDOWN/LSLEFT/LSRIGHT push the left stick. The keyboard
-  stands in for the pad while the game window has focus: Esc = START,
-  Enter = A, Space = B, Backspace = BACK, arrows = left stick.
+  only ends on START); LSUP/LSDOWN/LSLEFT/LSRIGHT push the left stick, and
+  entries can overlap (LSUP with LSRIGHT steers diagonally). A scripted run
+  ignores real controllers and the keyboard, so playing at the same time
+  cannot change a test. Otherwise the keyboard stands in for the pad while
+  the game window has focus: Esc = START, Enter = A, Space = B,
+  Backspace = BACK, arrows = left stick.
 - Scripts for relaunched runs: `RECOMP_INPUT` and `RECOMP_SHOT` take
   `this run|next run|...`; each relaunch gets what follows the first `|`,
   and its shots are named `build\shot_<run>_<frame>.bmp`.
@@ -170,6 +173,18 @@ next to the executable. Environment switches for unattended runs:
   (L02_1a fails its mission at once).
 - `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
   indirect (or all) guest calls. About 100× slower.
+- `RECOMP_NATIVE=117010,0325a0`: run those guest functions, and everything
+  they call, as the original x86 code instead of the recompiled C (the XBE
+  sits at its own addresses, so it runs on the host CPU against the same
+  memory). Kernel calls from native code are forwarded to the host kernel;
+  a hooked library function (D3D, DirectSound, XAPI) reached natively is
+  not. For narrowing a behaviour difference down to a mistranslated
+  function. Runs of the game are not repeatable frame for frame (guest
+  threads), so compare several runs per setting.
+- `host_watch(addr, len)` (boot.c), called from a temporary probe in the
+  generated code: a hardware write watchpoint that prints the recompiled
+  instruction, guest registers and guest return addresses of each write
+  (`RECOMP_WATCHMAX` hits, default 100).
 
 The translator's third argument picks what to emit: `leaf` (functions
 with no calls, computed jumps, special instructions or `fs:` accesses: the

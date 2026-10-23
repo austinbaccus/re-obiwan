@@ -99,6 +99,58 @@ static void print_host_stack(HANDLE thread, const CONTEXT *c) {
     fflush(stderr);
 }
 
+/* host_watch(addr, len): a hardware data watchpoint (debug register 0) on
+   the calling thread. Each write to the guest bytes prints the recompiled
+   instruction that wrote them, the guest registers and the guest return
+   addresses (RECOMP_WATCHMAX hits, default 100). len is 1, 2 or 4, and addr
+   must be a multiple of it. For debugging from a TEMP probe. */
+#define WATCH_ARM 0xE0A7C4E1u
+static uint32_t g_watch_addr, g_watch_len;
+static int g_watch_left;
+
+static LONG CALLBACK watch_handler(EXCEPTION_POINTERS *e) {
+    CONTEXT *c = e->ContextRecord;
+    if (e->ExceptionRecord->ExceptionCode == WATCH_ARM) {
+        c->Dr0 = g_watch_addr;
+        c->Dr7 = (c->Dr7 & ~0xf0003ul) | 1 | 1ul << 16 /* on write */ | (unsigned long)(g_watch_len == 4 ? 3 : g_watch_len - 1) << 18;
+        c->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !(c->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
+    c->Dr6 = 0;
+    if (g_watch_left-- > 0) {
+        init_symbols();
+        char buf[sizeof(SYMBOL_INFO) + 256] = {0};
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+        sym->SizeOfStruct = sizeof *sym;
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        uint32_t v = 0;
+        memcpy(&v, MEM(g_watch_addr), g_watch_len);
+        fprintf(stderr, "watch frame %u: %08x = %08x by %s\n", d3d_frame_count(), g_watch_addr, v,
+                SymFromAddr(GetCurrentProcess(), c->Eip, &disp, sym) ? sym->Name : "?");
+        print_guest_location(GetCurrentProcess(), c->Eip);
+        Ctx *g = kernel_current_ctx();
+        if (g) print_guest_state(g);
+    } else {
+        c->Dr7 &= ~3ul; /* done */
+    }
+    c->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void host_watch(uint32_t addr, uint32_t len) {
+    static int installed;
+    if (!installed++) {
+        AddVectoredExceptionHandler(1, watch_handler);
+        g_watch_left = getenv("RECOMP_WATCHMAX") ? atoi(getenv("RECOMP_WATCHMAX")) : 100;
+    }
+    g_watch_addr = addr;
+    g_watch_len = len;
+    fprintf(stderr, "watch: %u bytes at %08x\n", len, addr);
+    RaiseException(WATCH_ARM, 0, 0, NULL);
+}
+
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
     static int in_filter;
     if (in_filter++) ExitProcess(20);
@@ -216,6 +268,7 @@ static int run(int argc, char **argv) {
 
     /* The XBE entry point runs on the initial thread with no SystemRoutine:
        it creates the real main thread and returns. */
+    native_init();
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
     /* the window belongs to this thread: pump its messages while the game runs */
