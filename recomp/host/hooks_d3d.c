@@ -188,7 +188,35 @@ static void give(Ctx *ctx, uint32_t pp, uint32_t obj) {
 HOOK(D3DDevice_GetBackBuffer) { give(ctx, ARG(ctx, 2), g_backbuffer); RET(D3DDevice_GetBackBuffer, 0); }
 HOOK(D3DDevice_GetRenderTarget) { give(ctx, ARG(ctx, 0), g_rendertarget); RET(D3DDevice_GetRenderTarget, 0); }
 HOOK(D3DDevice_GetDepthStencilSurface) { give(ctx, ARG(ctx, 0), g_depth); RET(D3DDevice_GetDepthStencilSurface, 0); }
-HOOK(D3DDevice_SetRenderTarget) { if (ARG(ctx, 0)) g_rendertarget = ARG(ctx, 0); RET(D3DDevice_SetRenderTarget, 0); }
+HOOK(D3DDevice_SetRenderTarget) {
+    /* (pRenderTarget, pNewZStencil) */
+    uint32_t rt = ARG(ctx, 0), z = ARG(ctx, 1);
+    if (getenv("RECOMP_RTLOG")) {
+        static uint32_t seen[32]; static int n;
+        int known = 0;
+        for (int i = 0; i < n; i++) known |= seen[i] == (rt ^ (z << 1));
+        if (!known && n < 32) {
+            seen[n++] = rt ^ (z << 1);
+            uint32_t w = 0, h = 0, fmt = 0, pitch = 0;
+            if (rt) describe(rt, 0, &w, &h, &fmt, &pitch);
+            fprintf(stderr, "rt: set %08x (%s, data %08x, %ux%u fmt %02x) z %08x%s (frame %u)\n", rt, rt == g_backbuffer ? "back buffer" : "other",
+                    rt ? RD32(MEM(rt + O_DATA)) : 0, w, h, fmt, z, z == g_depth ? " (depth)" : "", g_frames);
+            if (z && z != g_depth) {
+                describe(z, 0, &w, &h, &fmt, &pitch);
+                fprintf(stderr, "    z surface: data %08x %ux%u fmt %02x format reg %08x size %08x\n", RD32(MEM(z + O_DATA)), w, h, fmt,
+                        RD32(MEM(z + O_FORMAT)), RD32(MEM(z + O_SIZE)));
+            }
+        }
+    }
+    if (rt) g_rendertarget = rt;
+    if (g_render) {
+        uint32_t w, h, fmt, pitch, zw = 0, zh = 0;
+        describe(g_rendertarget, 0, &w, &h, &fmt, &pitch);
+        if (z && z != g_depth) describe(z, 0, &zw, &zh, &fmt, &pitch);
+        r_set_render_target(g_rendertarget == g_backbuffer, w, h, !z ? 0 : z == g_depth ? 1 : 2, z ? RD32(MEM(z + O_DATA)) : 0, zw, zh);
+    }
+    RET(D3DDevice_SetRenderTarget, 0);
+}
 
 /* transforms are read back, so keep them */
 HOOK(D3DDevice_SetTransform) {

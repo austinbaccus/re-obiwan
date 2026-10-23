@@ -344,8 +344,16 @@ static void ps_instruction(Xs *x, char *line) {
         if (stage < 0 || stage > 3) { fail(x, "bad texture register in %s", opname); return; }
         char src[256] = "";
         if (n >= 2 && ps_source(x, ops[1], 0, src, sizeof src)) return;
-        if (!strcmp(opname, "tex")) { x->sampler[stage] = 1; emit(x, "  t%d = tex2D(s%d, tc%d.xy);\n", stage, stage, stage); }
-        else if (!strcmp(opname, "texcoord")) emit(x, "  t%d = float4(saturate(tc%d.xyz), 1);\n", stage, stage);
+        /* NV2A "project2d": s/q, t/q, and for a depth texture the r/q compare;
+           texscale: 1/w, 1/h for linear textures (texel coordinates) and, for
+           depth textures, r from depth buffer units to 0..1 */
+        if (!strcmp(opname, "tex")) {
+            x->sampler[stage] = 1;
+            emit(x, "  t%d = tex2Dproj(s%d, tc%d * float4(texscale[%d].xyz, 1));\n", stage, stage, stage, stage);
+        }
+        /* NV2A pass-through: s, t, r and q as a colour, clamped (DX8 on the PC
+           gives alpha 1; the shadow receiver fades by its q) */
+        else if (!strcmp(opname, "texcoord")) emit(x, "  t%d = saturate(tc%d);\n", stage, stage);
         else if (!strcmp(opname, "texm3x3pad")) {
             if (x->m3_rows > 1) { fail(x, "texm3x3pad without a matrix row free"); return; }
             emit(x, "  m3.%c = dot(tc%d.xyz, (%s).xyz);\n", "xy"[x->m3_rows++], stage, src);
@@ -532,7 +540,7 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
         rc = -1;
     } else if (ps) {
         size_t o = 0;
-        o += snprintf(out + o, cap - o, "float4 c[8] : register(c0);\n");
+        o += snprintf(out + o, cap - o, "float4 c[8] : register(c0);\nfloat4 texscale[4] : register(c8);\n");
         for (int i = 0; i < 4; i++)
             if (x->sampler[i]) o += snprintf(out + o, cap - o, "%s s%d : register(s%d);\n", x->sampler[i] == 2 ? "samplerCUBE" : "sampler2D", i, i);
         o += snprintf(out + o, cap - o,

@@ -302,6 +302,73 @@ void r_set_texture(uint32_t stage, uint32_t guest) {
     g_stage_dirty = 1;
 }
 
+/* ---- render targets ------------------------------------------------------- */
+/* The game renders shadow buffers: a throwaway colour surface (a header over
+   address 0) with a depth texture (LIN_F16) as its depth buffer, then
+   samples that texture through the NV2A's shadow compare. Off the back
+   buffer, draws go to a host colour target, and a guest depth texture is a
+   host D24S8 depth texture (keyed by the guest texture's memory), which
+   Direct3D 9 drivers sample with the same hardware depth compare. */
+typedef struct { uint32_t data, w, h; IDirect3DTexture9 *tex; } DepthTex;
+static DepthTex g_depthtex[8];
+static IDirect3DSurface9 *g_bb_color, *g_bb_depth, *g_off_color;
+static uint32_t g_off_w, g_off_h;
+
+static DepthTex *depth_texture(uint32_t data, uint32_t w, uint32_t h, int create) {
+    for (int i = 0; i < 8; i++) if (g_depthtex[i].data == data && g_depthtex[i].tex) return &g_depthtex[i];
+    if (!create || !data) return NULL;
+    for (int i = 0; i < 8; i++) {
+        DepthTex *d = &g_depthtex[i];
+        if (d->tex) continue;
+        if (FAILED(IDirect3DDevice9_CreateTexture(g_dev, w, h, 1, D3DUSAGE_DEPTHSTENCIL, D3DFMT_D24S8, D3DPOOL_DEFAULT, &d->tex, NULL))) {
+            static int warned;
+            if (!warned++) fprintf(stderr, "render: no D24S8 depth textures here; shadow buffers are not drawn\n");
+            d->tex = NULL;
+            return NULL;
+        }
+        d->data = data; d->w = w; d->h = h;
+        return d;
+    }
+    return NULL;
+}
+
+/* the NV2A compares shadow r in the depth buffer's own units; Direct3D 9
+   compares 0..1 */
+static float depth_unit_scale(uint32_t guest) {
+    switch ((RD32(MEM(guest + 0xC)) >> 8) & 0xff) {
+    case 0x2A: case 0x2E: return 1.0f / 16777215.0f;   /* D24S8 */
+    case 0x2C: case 0x30: return 1.0f / 65535.0f;      /* D16 */
+    case 0x2D: case 0x31: return 1.0f / 511.9375f;     /* F16: 0 .. 511.9375 */
+    default: return 1.0f;
+    }
+}
+
+/* z_kind: 0 no depth buffer, 1 the main one, 2 the depth texture at z_data */
+void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, uint32_t z_data, uint32_t z_w, uint32_t z_h) {
+    if (!g_dev) return;
+    if (!g_bb_color) { IDirect3DDevice9_GetRenderTarget(g_dev, 0, &g_bb_color); IDirect3DDevice9_GetDepthStencilSurface(g_dev, &g_bb_depth); }
+    if (back_buffer) IDirect3DDevice9_SetRenderTarget(g_dev, 0, g_bb_color);
+    else {
+        if (!g_off_color || g_off_w != w || g_off_h != h) {
+            if (g_off_color) IDirect3DSurface9_Release(g_off_color);
+            g_off_color = NULL;
+            if (FAILED(IDirect3DDevice9_CreateRenderTarget(g_dev, w, h, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &g_off_color, NULL))) {
+                fprintf(stderr, "render: cannot create a %ux%u render target\n", w, h);
+                return;
+            }
+            g_off_w = w; g_off_h = h;
+        }
+        IDirect3DDevice9_SetRenderTarget(g_dev, 0, g_off_color);
+    }
+    IDirect3DSurface9 *ds = NULL;
+    if (z_kind == 2) {
+        DepthTex *d = depth_texture(z_data, z_w, z_h, 1);
+        if (d) IDirect3DTexture9_GetSurfaceLevel(d->tex, 0, &ds);
+    }
+    IDirect3DDevice9_SetDepthStencilSurface(g_dev, z_kind == 1 ? g_bb_depth : ds);
+    if (ds) IDirect3DSurface9_Release(ds);
+}
+
 /* bind the guest textures to the device, uploading what changed */
 static void apply_textures(void) {
     if (!g_stage_dirty) return;
@@ -309,10 +376,20 @@ static void apply_textures(void) {
     for (uint32_t s = 0; s < 4; s++) {
         uint32_t g = g_bound[s];
         if (!g) { IDirect3DDevice9_SetTexture(g_dev, s, NULL); continue; }
-        TexSlot *t = tex_find(g, 1);
-        if (!t) continue;
-        if (t->dirty) upload(t);
-        IDirect3DDevice9_SetTexture(g_dev, s, (IDirect3DBaseTexture9 *)t->tex);
+        TexSlot *t = NULL;
+        DepthTex *d = depth_texture(RD32(MEM(g + 4)), 0, 0, 0);
+        uint32_t tw, th;
+        int linear;
+        if (d) { /* a shadow buffer we rendered: linear, addressed in texels */
+            IDirect3DDevice9_SetTexture(g_dev, s, (IDirect3DBaseTexture9 *)d->tex);
+            tw = d->w; th = d->h; linear = 1;
+        } else {
+            t = tex_find(g, 1);
+            if (!t) continue;
+            if (t->dirty) upload(t);
+            IDirect3DDevice9_SetTexture(g_dev, s, (IDirect3DBaseTexture9 *)t->tex);
+            tw = t->w; th = t->h; linear = t->tex && t->linear;
+        }
         /* the game's texture matrix while its TEXTURETRANSFORMFLAGS enable it
            (a matrix left over from an animated texture must not move later
            draws), followed for linear textures, which the console addresses
@@ -321,9 +398,9 @@ static void apply_textures(void) {
         uint32_t flags = g_texflags[s];
         D3DMATRIX m;
         memcpy(&m, flags ? g_texmat[s] : identity, 64);
-        if (t->tex && t->linear) {
-            float sx = 1.0f / t->w, sy = 1.0f / t->h;
-            for (int r = 0; r < 4; r++) { m.m[r][0] *= sx; m.m[r][1] *= sy; }
+        if (linear) {
+            float sx = 1.0f / tw, sy = 1.0f / th, sz = d ? depth_unit_scale(g) : 1.0f;
+            for (int r = 0; r < 4; r++) { m.m[r][0] *= sx; m.m[r][1] *= sy; m.m[r][2] *= sz; }
             if (!flags) flags = D3DTTFF_COUNT2;
         }
         IDirect3DDevice9_SetTransform(g_dev, D3DTS_TEXTURE0 + s, &m);
@@ -363,10 +440,30 @@ static uint32_t xbox_cull(uint32_t v) { return v == 0x900 ? D3DCULL_CW : v == 0x
 
 static void rs(D3DRENDERSTATETYPE s, uint32_t v) { if (g_dev) IDirect3DDevice9_SetRenderState(g_dev, s, v); }
 
+/* polygon offset (SOLIDOFFSETENABLE, POLYGONOFFSETZSLOPESCALE/ZOFFSET): the
+   shadow buffer passes rely on it against self-shadowing acne. The offset is
+   in units of the smallest depth step; Direct3D 9 wants depth fractions. */
+static struct { uint32_t fill; float slope, units; } g_polyoff;
+static void apply_polygon_offset(void) {
+    float slope = g_polyoff.fill ? g_polyoff.slope : 0, bias = g_polyoff.fill ? g_polyoff.units / 16777215.0f : 0;
+    DWORD a, b;
+    memcpy(&a, &slope, 4); memcpy(&b, &bias, 4);
+    rs(D3DRS_SLOPESCALEDEPTHBIAS, a);
+    rs(D3DRS_DEPTHBIAS, b);
+}
+
 void r_set_rs_simple(uint32_t method, uint32_t value) {
     /* the caller passes the push-buffer header (dword count in bits 18+,
        subchannel in 13..15), e.g. 0x40304 for ALPHABLENDENABLE */
+    float f;
+    memcpy(&f, &value, 4);
     switch (method & 0x1FFC) {
+    case 0x338: g_polyoff.fill = value != 0; apply_polygon_offset(); goto offset_log;
+    case 0x384: g_polyoff.slope = f; apply_polygon_offset(); goto offset_log;
+    case 0x388: g_polyoff.units = f; apply_polygon_offset();
+    offset_log:
+        if (getenv("RECOMP_RSLOG")) fprintf(stderr, "polygon offset: fill %u slope %g units %g\n", g_polyoff.fill, g_polyoff.slope, g_polyoff.units);
+        break;
     case 0x354: rs(D3DRS_ZFUNC, gl_cmp(value)); break;
     case 0x33C: rs(D3DRS_ALPHAFUNC, gl_cmp(value)); break;
     case 0x304: rs(D3DRS_ALPHABLENDENABLE, value != 0); break;
@@ -749,6 +846,8 @@ static void apply_textures(void);
 static void apply_pixel_shader(void);
 static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
     if (!vshader_ready(g_vsh) || !n) return;
+    if (getenv("RECOMP_NOSHADOW"))   /* debugging: leave out draws that sample a shadow buffer */
+        for (int s = 0; s < 4; s++) if (g_bound[s] && depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0)) return;
     uint32_t first = 0, last = n - 1;
     if (idx) {
         first = 0xffff; last = 0;
@@ -890,6 +989,16 @@ static void apply_pixel_shader(void) {
     if (g_psh && pshader_ready(g_psh)) {
         IDirect3DDevice9_SetPixelShader(g_dev, g_psh->ps);
         IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 0, &g_psc[0][0], 8);
+        float scale[4][4];
+        for (int s = 0; s < 4; s++) {   /* texel coordinates for linear textures */
+            scale[s][0] = scale[s][1] = scale[s][2] = scale[s][3] = 1;
+            if (!g_bound[s]) continue;
+            DepthTex *d = depth_texture(RD32(MEM(g_bound[s] + 4)), 0, 0, 0);
+            TexSlot *t = d ? NULL : tex_find(g_bound[s], 0);
+            if (d) { scale[s][0] = 1.0f / d->w; scale[s][1] = 1.0f / d->h; scale[s][2] = depth_unit_scale(g_bound[s]); }
+            else if (t && t->tex && t->linear) { scale[s][0] = 1.0f / t->w; scale[s][1] = 1.0f / t->h; }
+        }
+        IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 8, &scale[0][0], 4);
         ps_fog = g_psh->fog;
     } else IDirect3DDevice9_SetPixelShader(g_dev, NULL);
     apply_fog(ps_fog, g_vsh != NULL);
