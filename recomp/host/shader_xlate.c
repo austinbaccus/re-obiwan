@@ -27,6 +27,9 @@ typedef struct {
     uint32_t inputs;
     int depth, failed;
     char msg[200];
+    /* pixel shaders */
+    int ps, final_written, m3_rows;
+    uint8_t sampler[4];       /* 0 unused, 1 2D, 2 cube */
 } Xs;
 
 static void fail(Xs *x, const char *fmt, ...) {
@@ -265,6 +268,151 @@ static void instruction(Xs *x, char *line) {
     else emit(x, "  %s.%s = t.%s;\n", dst, mask, mask);
 }
 
+/* ---- pixel shaders (xps.1.1: NV2A register combiners) ------------------------
+   Registers r0 r1 t0..t3 v0 v1 c0..c7 zero, and in xfc fog, prod (E*F) and
+   sum (r0 + v1). Source modifiers 1-x, -x, _bias, _bx2, _sat; selectors .a
+   .b .rgb; instruction modifiers _x2 _x4 _d2 _sat; register writes clamp to
+   [-1, 1] as the combiners do. The final combiner "xfc A,B,C,D,E,F,G" gives
+   rgb = A*B + (1-A)*C + D and alpha G; without one the output is r0. Fog is
+   left to the device: fog.a reads as 1 (no fog), fog.rgb as 0. */
+static int ps_source(Xs *x, const char *op, int alpha_dest, char *out, size_t cap) {
+    char tmp[96];
+    snprintf(tmp, sizeof tmp, "%s", op);
+    char *s = trim(tmp);
+    int invert = 0, neg = 0;
+    if (s[0] == '1' && s[1] == '-') { invert = 1; s = trim(s + 2); }
+    else if (s[0] == '-') { neg = 1; s = trim(s + 1); }
+    char *sel = strchr(s, '.');
+    char selector[8] = "";
+    if (sel) { snprintf(selector, sizeof selector, "%s", sel + 1); *sel = 0; }
+    int bias = 0, bx2 = 0, sat = 0;
+    for (char *u; (u = strrchr(s, '_')) != NULL; *u = 0) {
+        if (!_stricmp(u, "_bias")) bias = 1;
+        else if (!_stricmp(u, "_bx2")) bx2 = 1;
+        else if (!_stricmp(u, "_sat")) sat = 1;
+        else break;
+    }
+    char base[96];
+    if ((s[0] == 'r' && (s[1] == '0' || s[1] == '1') && !s[2]) || (s[0] == 't' && s[1] >= '0' && s[1] <= '3' && !s[2]) ||
+        (s[0] == 'v' && (s[1] == '0' || s[1] == '1') && !s[2])) snprintf(base, sizeof base, "%s", s);
+    else if (s[0] == 'c' && isdigit((unsigned char)s[1])) {
+        int n = atoi(s + 1);
+        if (n > 7) { fail(x, "bad pixel shader constant %s", s); return -1; }
+        if (x->defined[n]) snprintf(base, sizeof base, "float4(%.9g, %.9g, %.9g, %.9g)", x->defc[n][0], x->defc[n][1], x->defc[n][2], x->defc[n][3]);
+        else snprintf(base, sizeof base, "c[%d]", n);
+    }
+    else if (!strcmp(s, "zero")) strcpy(base, "float4(0, 0, 0, 0)");
+    else if (!strcmp(s, "fog")) strcpy(base, "float4(0, 0, 0, 1)");
+    else if (!strcmp(s, "prod")) strcpy(base, "prod");
+    else if (!strcmp(s, "sum")) strcpy(base, "(r0 + v1)");
+    else { fail(x, "unknown pixel shader register '%s'", s); return -1; }
+    char e[256];
+    snprintf(e, sizeof e, "%s", base);
+    if (bias) { char t[256]; snprintf(t, sizeof t, "(%s - 0.5)", e); strcpy(e, t); }
+    if (bx2) { char t[256]; snprintf(t, sizeof t, "(2 * %s - 1)", e); strcpy(e, t); }
+    if (sat) { char t[256]; snprintf(t, sizeof t, "saturate(%s)", e); strcpy(e, t); }
+    const char *swz = "";
+    if (!_stricmp(selector, "a") || !_stricmp(selector, "w")) swz = ".aaaa";
+    else if (!_stricmp(selector, "b") || !_stricmp(selector, "z")) swz = ".bbbb";
+    else if (!_stricmp(selector, "rgb") || !_stricmp(selector, "xyz")) swz = alpha_dest ? ".bbbb" : ".rgbb";  /* alpha reads blue */
+    if (invert) snprintf(out, cap, "(1 - (%s)%s)", e, swz);
+    else snprintf(out, cap, "%s(%s)%s", neg ? "-" : "", e, swz);
+    return 0;
+}
+
+static void ps_instruction(Xs *x, char *line) {
+    char *sp = line;
+    while (*sp && !isspace((unsigned char)*sp)) sp++;
+    char opname[32];
+    snprintf(opname, sizeof opname, "%.*s", (int)(sp - line), line);
+    for (char *p = opname; *p; p++) *p = (char)tolower((unsigned char)*p);
+    float scale = 1;
+    int sat = 0;
+    for (char *u; (u = strrchr(opname, '_')) != NULL; *u = 0) {
+        if (!strcmp(u, "_x2")) scale *= 2;
+        else if (!strcmp(u, "_x4")) scale *= 4;
+        else if (!strcmp(u, "_d2")) scale *= 0.5f;
+        else if (!strcmp(u, "_sat")) sat = 1;
+        else { fail(x, "unknown instruction modifier '%s'", u); return; }
+    }
+    char *ops[8];
+    int n = split_operands(sp, ops, 8);
+
+    /* texture addressing: the destination is the stage */
+    if (!strncmp(opname, "tex", 3)) {
+        int stage = (n >= 1 && ops[0][0] == 't') ? ops[0][1] - '0' : -1;
+        if (stage < 0 || stage > 3) { fail(x, "bad texture register in %s", opname); return; }
+        char src[256] = "";
+        if (n >= 2 && ps_source(x, ops[1], 0, src, sizeof src)) return;
+        if (!strcmp(opname, "tex")) { x->sampler[stage] = 1; emit(x, "  t%d = tex2D(s%d, tc%d.xy);\n", stage, stage, stage); }
+        else if (!strcmp(opname, "texcoord")) emit(x, "  t%d = float4(saturate(tc%d.xyz), 1);\n", stage, stage);
+        else if (!strcmp(opname, "texm3x3pad")) {
+            if (x->m3_rows > 1) { fail(x, "texm3x3pad without a matrix row free"); return; }
+            emit(x, "  m3.%c = dot(tc%d.xyz, (%s).xyz);\n", "xy"[x->m3_rows++], stage, src);
+        } else if (!strcmp(opname, "texm3x3vspec") || !strcmp(opname, "texm3x3tex")) {
+            if (x->m3_rows != 2) { fail(x, "%s without two texm3x3pad rows", opname); return; }
+            x->m3_rows = 0;
+            x->sampler[stage] = 2;
+            emit(x, "  m3.z = dot(tc%d.xyz, (%s).xyz);\n", stage, src);
+            if (opname[7] == 'v')   /* reflect the eye vector (the rows' w) about the normal */
+                emit(x, "  e3 = float3(tc%d.w, tc%d.w, tc%d.w); m3 = 2 * m3 * dot(m3, e3) / dot(m3, m3) - e3;\n", stage - 2, stage - 1, stage);
+            emit(x, "  t%d = texCUBE(s%d, m3);\n", stage, stage);
+        } else fail(x, "unsupported texture instruction '%s'", opname);
+        return;
+    }
+
+    if (!strcmp(opname, "xfc")) {
+        if (n != 7) { fail(x, "xfc takes 7 operands"); return; }
+        char s[7][256];
+        if (ps_source(x, ops[4], 0, s[4], sizeof s[4]) || ps_source(x, ops[5], 0, s[5], sizeof s[5])) return;
+        emit(x, "  prod = %s * %s;\n", s[4], s[5]);
+        for (int i = 0; i < 4; i++) if (ps_source(x, ops[i], 0, s[i], sizeof s[i])) return;
+        if (ps_source(x, ops[6], 1, s[6], sizeof s[6])) return;
+        emit(x, "  fin.rgb = (%s * %s + (1 - %s) * %s + %s).rgb;\n  fin.a = (%s).a;\n", s[0], s[1], s[0], s[2], s[3], s[6]);
+        x->final_written = 1;
+        return;
+    }
+
+    static const struct { const char *name; int srcs; } TABLE[] = {
+        {"mov", 1}, {"add", 2}, {"sub", 2}, {"mul", 2}, {"mad", 3}, {"lrp", 3}, {"dp3", 2}, {"dp4", 2}, {"cnd", 3},
+    };
+    int k = -1;
+    for (size_t i = 0; i < sizeof TABLE / sizeof TABLE[0]; i++) if (!strcmp(opname, TABLE[i].name)) k = (int)i;
+    if (k < 0) { fail(x, "unsupported pixel shader instruction '%s'", opname); return; }
+    if (n != TABLE[k].srcs + 1) { fail(x, "'%s' takes %d operands, got %d", opname, TABLE[k].srcs + 1, n); return; }
+
+    char dst[8], mask[8] = "";
+    {
+        char tmp[64];
+        snprintf(tmp, sizeof tmp, "%s", ops[0]);
+        char *d = trim(tmp), *dot = strchr(d, '.');
+        if (dot) { snprintf(mask, sizeof mask, "%s", dot + 1); *dot = 0; }
+        if (!((d[0] == 'r' && (d[1] == '0' || d[1] == '1')) || (d[0] == 't' && d[1] >= '0' && d[1] <= '3') ||
+              (d[0] == 'v' && (d[1] == '0' || d[1] == '1'))) || d[2]) { fail(x, "bad destination '%s'", d); return; }
+        snprintf(dst, sizeof dst, "%s", d);
+    }
+    for (char *p = mask; *p; p++) *p = (char)tolower((unsigned char)*p);
+    int alpha_only = !strcmp(mask, "a") || !strcmp(mask, "w");
+    char s[3][256];
+    for (int i = 0; i < TABLE[k].srcs; i++) if (ps_source(x, ops[i + 1], alpha_only, s[i], sizeof s[i])) return;
+    const char *A = s[0], *B = s[1], *C = s[2];
+    if (!strcmp(opname, "mov")) emit(x, "  res = %s;\n", A);
+    else if (!strcmp(opname, "add")) emit(x, "  res = %s + %s;\n", A, B);
+    else if (!strcmp(opname, "sub")) emit(x, "  res = %s - %s;\n", A, B);
+    else if (!strcmp(opname, "mul")) emit(x, "  res = %s * %s;\n", A, B);
+    else if (!strcmp(opname, "mad")) emit(x, "  res = %s * %s + %s;\n", A, B, C);
+    else if (!strcmp(opname, "lrp")) emit(x, "  res = %s * %s + (1 - %s) * %s;\n", A, B, A, C);
+    else if (!strcmp(opname, "dp3")) emit(x, "  res = dot((%s).rgb, (%s).rgb);\n", A, B);
+    else if (!strcmp(opname, "dp4")) emit(x, "  res = dot(%s, %s);\n", A, B);
+    else if (!strcmp(opname, "cnd")) emit(x, "  res = ((%s).a > 0.5) ? %s : %s;\n", A, B, C);
+    if (scale != 1) emit(x, "  res *= %g;\n", scale);
+    emit(x, sat ? "  res = saturate(res);\n" : "  res = clamp(res, -1, 1);\n");
+    if (!mask[0] || !strcmp(mask, "rgba") || !strcmp(mask, "xyzw")) emit(x, "  %s = res;\n", dst);
+    else if (!strcmp(mask, "rgb") || !strcmp(mask, "xyz")) emit(x, "  %s.rgb = res.rgb;\n", dst);
+    else if (alpha_only) emit(x, "  %s.a = res.a;\n", dst);
+    else fail(x, "unsupported write mask .%s", mask);
+}
+
 static void process_line(Xs *x, const char *raw);
 
 static void expand_macro(Xs *x, const Macro *m, char *args) {
@@ -316,7 +464,7 @@ static void process_line(Xs *x, const char *raw) {
     if ((c = strstr(buf, "//")) != NULL) *c = 0;
     char *line = trim(buf);
     if (!*line) return;
-    if (!strncmp(line, "vs.", 3) || !strncmp(line, "xvs.", 4)) return;
+    if (!strncmp(line, "vs.", 3) || !strncmp(line, "xvs.", 4) || !strncmp(line, "ps.", 3) || !strncmp(line, "xps.", 4)) return;
     if (!strncmp(line, "#define", 7)) {
         char *p = trim(line + 7), *e = p;
         while (*e && !isspace((unsigned char)*e)) e++;
@@ -341,11 +489,13 @@ static void process_line(Xs *x, const char *raw) {
     sscanf(line, "%63s", first);
     for (int i = 0; i < x->nmacros; i++)
         if (!strcmp(first, x->macros[i].name)) { expand_macro(x, &x->macros[i], line + strlen(first)); return; }
-    instruction(x, line);
+    if (x->ps) ps_instruction(x, line);
+    else instruction(x, line);
 }
 
-int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *inputs) {
+static int translate(const char *src, size_t len, int ps, char *out, size_t cap, uint32_t *inputs) {
     Xs *x = calloc(1, sizeof *x);
+    x->ps = ps;
     char *text = malloc(len + 1);
     memcpy(text, src, len);
     text[len] = 0;
@@ -379,6 +529,22 @@ int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *
     if (x->failed) {
         snprintf(out, cap, "%s", x->msg);
         rc = -1;
+    } else if (ps) {
+        size_t o = 0;
+        o += snprintf(out + o, cap - o, "float4 c[8] : register(c0);\n");
+        for (int i = 0; i < 4; i++)
+            if (x->sampler[i]) o += snprintf(out + o, cap - o, "%s s%d : register(s%d);\n", x->sampler[i] == 2 ? "samplerCUBE" : "sampler2D", i, i);
+        o += snprintf(out + o, cap - o,
+                      "float4 main(float4 v0 : COLOR0, float4 v1 : COLOR1, float4 tc0 : TEXCOORD0, float4 tc1 : TEXCOORD1,\n"
+                      "            float4 tc2 : TEXCOORD2, float4 tc3 : TEXCOORD3) : COLOR {\n"
+                      "  float4 r0 = 0, r1 = 0, t0 = 0, t1 = 0, t2 = 0, t3 = 0, res = 0, prod = 0, fin = 0;\n"
+                      "  float3 m3 = 0, e3 = 0;\n");
+        if (o + x->body_len + 64 > cap) { snprintf(out, cap, "HLSL too long"); rc = -1; }
+        else {
+            memcpy(out + o, x->body ? x->body : "", x->body_len);
+            o += x->body_len;
+            snprintf(out + o, cap - o, "  return saturate(%s);\n}\n", x->final_written ? "fin" : "r0");
+        }
     } else {
         size_t o = 0;
         o += snprintf(out + o, cap - o,
@@ -411,4 +577,17 @@ int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *
     free(text);
     free(x);
     return rc;
+}
+
+int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *inputs) {
+    return translate(src, len, 0, out, cap, inputs);
+}
+
+int xs_ps_to_hlsl(const char *src, size_t len, char *out, size_t cap) {
+    return translate(src, len, 1, out, cap, NULL);
+}
+
+int xs_is_pixel_shader(const char *src, size_t len) {
+    while (len && isspace((unsigned char)*src)) { src++; len--; }
+    return (len > 3 && !strncmp(src, "ps.", 3)) || (len > 4 && !strncmp(src, "xps.", 4));
 }

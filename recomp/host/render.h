@@ -30,6 +30,10 @@ void r_delete_vertex_shader(uint32_t handle);
 void r_set_vs_constants(int reg, const float *data, uint32_t count); /* c0..c95 */
 void r_set_pixel_shader(uint32_t handle);
 void r_create_pixel_shader(uint32_t handle, const uint32_t *psdef); /* D3DPIXELSHADERDEF, 66 dwords */
+/* a pixel shader from the game's source text (shader_xlate.c) */
+void r_create_pixel_shader_source(uint32_t handle, const char *src, size_t len);
+void r_delete_pixel_shader(uint32_t handle);
+void r_set_ps_constants(int reg, const float *data, uint32_t count); /* c0..c7 */
 void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);
 void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
 void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);

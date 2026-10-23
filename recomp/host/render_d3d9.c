@@ -631,33 +631,39 @@ void r_set_vs_constants(int reg, const float *data, uint32_t count) {
         if (reg + (int)i >= 0 && reg + (int)i < 96) memcpy(g_vsc[reg + i], data + 4 * i, 16);
 }
 
+/* HLSL to bytecode through d3dcompiler_47 (loaded on first use); NULL on failure */
+static ID3DBlob *compile_hlsl(const char *hlsl, const char *target, uint32_t handle) {
+    static D3DCompileFn compile;
+    static int missing;
+    if (!compile && !missing) {
+        HMODULE dll = LoadLibraryA("d3dcompiler_47.dll");
+        compile = dll ? (D3DCompileFn)GetProcAddress(dll, "D3DCompile") : NULL;
+        if (!compile) { missing = 1; fprintf(stderr, "render: d3dcompiler_47.dll is missing; shaders are not drawn\n"); }
+    }
+    if (!compile) return NULL;
+    ID3DBlob *code = NULL, *errors = NULL;
+    HRESULT hr = compile(hlsl, strlen(hlsl), target, NULL, NULL, "main", target, 0, 0, &code, &errors);
+    if (FAILED(hr))
+        fprintf(stderr, "render: %s shader %08x does not compile: %s\n", target, handle, errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "?");
+    if (errors) ID3D10Blob_Release(errors);
+    return SUCCEEDED(hr) ? code : NULL;
+}
+
 /* translate and compile on first use */
 static int vshader_ready(VShader *s) {
     if (s->vs) return 1;
     if (s->failed || !g_dev) return 0;
     s->failed = 1;
-    static D3DCompileFn compile;
-    if (!compile) {
-        HMODULE dll = LoadLibraryA("d3dcompiler_47.dll");
-        compile = dll ? (D3DCompileFn)GetProcAddress(dll, "D3DCompile") : NULL;
-        if (!compile) { fprintf(stderr, "render: d3dcompiler_47.dll is missing; vertex shaders are not drawn\n"); return 0; }
-    }
     static char hlsl[1 << 17];
     uint32_t inputs = 0;
     if (xs_vs_to_hlsl(s->src, s->len, hlsl, sizeof hlsl, &inputs)) {
         fprintf(stderr, "render: vertex shader %08x not translated: %s\n", s->handle, hlsl);
         return 0;
     }
-    ID3DBlob *code = NULL, *errors = NULL;
-    HRESULT hr = compile(hlsl, strlen(hlsl), "xvs", NULL, NULL, "main", "vs_2_0", 0, 0, &code, &errors);
-    if (FAILED(hr)) {
-        fprintf(stderr, "render: vertex shader %08x does not compile: %s\n", s->handle, errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "?");
-        if (errors) ID3D10Blob_Release(errors);
-        return 0;
-    }
-    hr = IDirect3DDevice9_CreateVertexShader(g_dev, (const DWORD *)ID3D10Blob_GetBufferPointer(code), &s->vs);
+    ID3DBlob *code = compile_hlsl(hlsl, "vs_2_0", s->handle);
+    if (!code) return 0;
+    HRESULT hr = IDirect3DDevice9_CreateVertexShader(g_dev, (const DWORD *)ID3D10Blob_GetBufferPointer(code), &s->vs);
     ID3D10Blob_Release(code);
-    if (errors) ID3D10Blob_Release(errors);
     if (FAILED(hr)) { fprintf(stderr, "render: CreateVertexShader failed %08lx\n", hr); return 0; }
     D3DVERTEXELEMENT9 el[17];
     s->nregs = 0;
@@ -676,6 +682,7 @@ static int vshader_ready(VShader *s) {
    touches (first..last) into float4 inputs, indices rebased to first */
 static D3DPRIMITIVETYPE prim_pc(uint32_t p, uint32_t n, uint32_t *count);
 static void apply_textures(void);
+static void apply_pixel_shader(void);
 static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
     if (!vshader_ready(g_vsh) || !n) return;
     uint32_t first = 0, last = n - 1;
@@ -696,6 +703,7 @@ static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t st
         }
     }
     apply_textures();
+    apply_pixel_shader();
     IDirect3DDevice9_SetVertexDeclaration(g_dev, g_vsh->decl);
     IDirect3DDevice9_SetVertexShader(g_dev, g_vsh->vs);
     IDirect3DDevice9_SetVertexShaderConstantF(g_dev, 0, &g_vsc[0][0], 96);
@@ -735,7 +743,74 @@ void r_set_vertex_shader(uint32_t handle) {
         IDirect3DDevice9_SetFVF(g_dev, handle & ~0x1u);
     }
 }
-void r_set_pixel_shader(uint32_t handle) { g_ps_handle = handle; }
+/* ---- pixel shaders --------------------------------------------------------- */
+/* Translated like the vertex shaders (ps_2_0); a draw binds the current one,
+   or none, so the texture stage states apply */
+typedef struct { uint32_t handle; char *src; size_t len; IDirect3DPixelShader9 *ps; int failed; } PShader;
+#define PSHADERS 64
+static PShader g_pshaders[PSHADERS];
+static PShader *g_psh;
+static float g_psc[8][4];
+
+void r_create_pixel_shader_source(uint32_t handle, const char *src, size_t len) {
+    PShader *s = NULL;
+    for (int i = 0; i < PSHADERS && !s; i++) if (!g_pshaders[i].handle) s = &g_pshaders[i];
+    if (!s) { fprintf(stderr, "render: out of pixel shader slots\n"); return; }
+    memset(s, 0, sizeof *s);
+    s->handle = handle;
+    s->src = malloc(len);
+    memcpy(s->src, src, len);
+    s->len = len;
+}
+
+void r_delete_pixel_shader(uint32_t handle) {
+    for (int i = 0; i < PSHADERS; i++) {
+        PShader *s = &g_pshaders[i];
+        if (s->handle != handle) continue;
+        if (s->ps) IDirect3DPixelShader9_Release(s->ps);
+        free(s->src);
+        if (g_psh == s) g_psh = NULL;
+        memset(s, 0, sizeof *s);
+    }
+}
+
+void r_set_ps_constants(int reg, const float *data, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++)
+        if (reg + (int)i >= 0 && reg + (int)i < 8) memcpy(g_psc[reg + i], data + 4 * i, 16);
+}
+
+static PShader *find_pshader(uint32_t handle) {
+    for (int i = 0; handle && i < PSHADERS; i++) if (g_pshaders[i].handle == handle) return &g_pshaders[i];
+    return NULL;
+}
+
+void r_set_pixel_shader(uint32_t handle) { g_ps_handle = handle; g_psh = find_pshader(handle); }
+
+static int pshader_ready(PShader *s) {
+    if (s->ps) return 1;
+    if (s->failed || !g_dev) return 0;
+    s->failed = 1;
+    static char hlsl[1 << 16];
+    if (xs_ps_to_hlsl(s->src, s->len, hlsl, sizeof hlsl)) {
+        fprintf(stderr, "render: pixel shader %08x not translated: %s\n", s->handle, hlsl);
+        return 0;
+    }
+    ID3DBlob *code = compile_hlsl(hlsl, "ps_2_0", s->handle);
+    if (!code) return 0;
+    HRESULT hr = IDirect3DDevice9_CreatePixelShader(g_dev, (const DWORD *)ID3D10Blob_GetBufferPointer(code), &s->ps);
+    ID3D10Blob_Release(code);
+    if (FAILED(hr)) { fprintf(stderr, "render: CreatePixelShader failed %08lx\n", hr); return 0; }
+    s->failed = 0;
+    return 1;
+}
+
+/* the pixel shader for the next draw, or the fixed-function stages */
+static void apply_pixel_shader(void) {
+    if (g_psh && pshader_ready(g_psh)) {
+        IDirect3DDevice9_SetPixelShader(g_dev, g_psh->ps);
+        IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 0, &g_psc[0][0], 8);
+    } else IDirect3DDevice9_SetPixelShader(g_dev, NULL);
+}
 
 void r_create_pixel_shader(uint32_t handle, const uint32_t *def) {
     /* for now: describe each distinct definition once (RECOMP_DRAWLOG) */
@@ -801,6 +876,7 @@ void r_apply_state_block(uint32_t token) {
     g_vsh = NULL;
     if (g_vs_handle & 1)
         for (int i = 0; i < VSHADERS; i++) if (g_vshaders[i].handle == g_vs_handle) g_vsh = &g_vshaders[i];
+    g_psh = find_pshader(g_ps_handle);
     g_stage_dirty = 1; /* rebind: a bound texture may have been re-uploaded since */
 }
 void r_delete_state_block(uint32_t token) {
@@ -879,6 +955,7 @@ static void draw_up(uint32_t prim, uint32_t n, const void *data, uint32_t stride
     drawlog(prim, n, data, stride);
     statelog(prim, n, data, stride);
     apply_textures();
+    apply_pixel_shader();
     if (prim == 8) { /* quad list: two triangles per quad through an index list */
         uint32_t quads = n / 4;
         static uint16_t *idx; static uint32_t idx_cap;
@@ -925,6 +1002,7 @@ void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t bas
     uint32_t maxv = 0;
     for (uint32_t i = 0; i < n; i++) if (idx[i] > maxv) maxv = idx[i];
     apply_textures();
+    apply_pixel_shader();
     uint32_t count;
     D3DPRIMITIVETYPE t = prim_pc(prim, n, &count);
     if (prim == 8) { /* quads: expand to triangles */

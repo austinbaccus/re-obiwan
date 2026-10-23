@@ -18,6 +18,7 @@
 #include "funcs.h"
 #include "kernel.h"
 #include "render.h"
+#include "shader_xlate.h"
 
 /* PC D3DRENDERSTATETYPE numbers for the dedicated setters */
 enum { PC_RS_ZENABLE = 7, PC_RS_CULLMODE = 22, PC_RS_FOGCOLOR = 34, PC_RS_STENCILENABLE = 52, PC_RS_STENCILFAIL = 53, PC_RS_TEXTUREFACTOR = 60 };
@@ -269,21 +270,32 @@ HOOK(D3DDevice_SetVertexShaderConstant) {
     RET(D3DDevice_SetVertexShaderConstant, 0);
 }
 HOOK(D3DDevice_SetPixelShader) { if (g_render) r_set_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_SetPixelShader, 0); }
-HOOK(D3DDevice_SetPixelShaderConstant) { RET(D3DDevice_SetPixelShaderConstant, 0); }
+/* (Register, pConstantData, ConstantCount) */
+HOOK(D3DDevice_SetPixelShaderConstant) {
+    if (g_render && ARG(ctx, 1)) r_set_ps_constants((int32_t)ARG(ctx, 0), (const float *)MEM(ARG(ctx, 1)), ARG(ctx, 2));
+    RET(D3DDevice_SetPixelShaderConstant, 0);
+}
 static uint32_t g_handles = 0x1000;
-/* vertex shader sources seen by XGAssembleShader; its output buffer holds
-   XVS_MAGIC and the index here instead of microcode */
+/* shader sources seen by XGAssembleShader; its output buffer holds
+   XVS_MAGIC or XPS_MAGIC and the index here instead of microcode or a
+   D3DPIXELSHADERDEF */
 #define XVS_MAGIC 0x21535658u /* "XVS!" */
+#define XPS_MAGIC 0x21535058u /* "XPS!" */
 static struct { char *src; size_t len; } g_vs_sources[64];
 static int g_nvs_sources;
+static int shader_source(uint32_t buf, uint32_t magic) {
+    return buf && RD32(MEM(buf)) == magic && RD32(MEM(buf + 4)) < (uint32_t)g_nvs_sources ? (int)RD32(MEM(buf + 4)) : -1;
+}
 HOOK(D3DDevice_CreatePixelShader) {
-    /* (pPSDef, pHandle): the register-combiner setup, 66 dwords */
+    /* (pPSDef, pHandle): a D3DPIXELSHADERDEF, or the tag of a translated source */
     uint32_t def = ARG(ctx, 0), handle = g_handles++;
     if (ARG(ctx, 1)) WR32(MEM(ARG(ctx, 1)), handle);
-    if (g_render && def) r_create_pixel_shader(handle, (const uint32_t *)MEM(def));
+    int id = shader_source(def, XPS_MAGIC);
+    if (g_render && id >= 0) r_create_pixel_shader_source(handle, g_vs_sources[id].src, g_vs_sources[id].len);
+    else if (g_render && def) r_create_pixel_shader(handle, (const uint32_t *)MEM(def));
     RET(D3DDevice_CreatePixelShader, 0);
 }
-HOOK(D3DDevice_DeletePixelShader) { RET(D3DDevice_DeletePixelShader, 0); }
+HOOK(D3DDevice_DeletePixelShader) { if (g_render) r_delete_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_DeletePixelShader, 0); }
 /* Vertex shaders are not translated yet: CreateVertexShader(pDeclaration,
    pFunction, pHandle, Usage) hands out an odd handle (bit 0 set marks a
    shader rather than an FVF code), and the renderer falls back to fixed
@@ -297,11 +309,10 @@ HOOK(D3DDevice_CreateVertexShader) {
         fprintf(stderr, "\n");
     }
     if (ph) WR32(MEM(ph), handle);
-    uint32_t fn = ARG(ctx, 1);
-    if (g_render && fn && RD32(MEM(fn)) == XVS_MAGIC && RD32(MEM(fn + 4)) < (uint32_t)g_nvs_sources) {
+    int id = shader_source(ARG(ctx, 1), XVS_MAGIC);
+    if (g_render && id >= 0) {
         uint32_t tokens[64]; int n = 0;
         while (decl && n < 64 && (tokens[n] = RD32(MEM(decl + 4 * n))) != 0xFFFFFFFF) n++;
-        const int id = RD32(MEM(fn + 4));
         r_create_vertex_shader(handle, g_vs_sources[id].src, g_vs_sources[id].len, tokens, n);
     }
     RET(D3DDevice_CreateVertexShader, 0);
@@ -389,13 +400,15 @@ HOOK(XGAssembleShader) {
     size_t text_len = ARG(ctx, 2);
     const char *head = text;
     while (head < text + text_len && (*head == ' ' || *head == '\t' || *head == '\r' || *head == '\n')) head++;
-    if (ARG(ctx, 5) && (!strncmp(head, "vs.", 3) || !strncmp(head, "xvs.", 4)) && g_nvs_sources < 64) {
+    int ps = xs_is_pixel_shader(text, text_len);
+    if (ARG(ctx, 5) && (ps || !strncmp(head, "vs.", 3) || !strncmp(head, "xvs.", 4)) && g_nvs_sources < 64) {
         int id = g_nvs_sources++;
         g_vs_sources[id].src = malloc(text_len);
         memcpy(g_vs_sources[id].src, text, text_len);
         g_vs_sources[id].len = text_len;
-        uint32_t buf = make_xgbuffer(ctx, 16), data = buf ? RD32(MEM(buf + 4)) : 0;
-        if (data) { WR32(MEM(data), XVS_MAGIC); WR32(MEM(data + 4), (uint32_t)id); }
+        /* pixel shaders keep the D3DPIXELSHADERDEF size in case the game reads it */
+        uint32_t buf = make_xgbuffer(ctx, ps ? 0xA4 : 16), data = buf ? RD32(MEM(buf + 4)) : 0;
+        if (data) { WR32(MEM(data), ps ? XPS_MAGIC : XVS_MAGIC); WR32(MEM(data + 4), (uint32_t)id); }
         WR32(MEM(ARG(ctx, 5)), buf);
         if (ARG(ctx, 4)) WR32(MEM(ARG(ctx, 4)), 0);
         if (ARG(ctx, 6)) WR32(MEM(ARG(ctx, 6)), 0);

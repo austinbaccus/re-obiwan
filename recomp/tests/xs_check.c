@@ -32,13 +32,14 @@ int main(int argc, char **argv) {
         fclose(f);
         total++;
         uint32_t inputs = 0;
-        if (xs_vs_to_hlsl(src, n, hlsl, sizeof hlsl, &inputs)) {
+        int ps = xs_is_pixel_shader(src, n);
+        if (ps ? xs_ps_to_hlsl(src, n, hlsl, sizeof hlsl) : xs_vs_to_hlsl(src, n, hlsl, sizeof hlsl, &inputs)) {
             printf("%s: translate: %s\n", argv[i], hlsl);
             bad++;
         } else {
             if (verbose) printf("---- %s\n%s", argv[i], hlsl);
             ID3DBlob *code = NULL, *errors = NULL;
-            HRESULT hr = compile(hlsl, strlen(hlsl), argv[i], NULL, NULL, "main", "vs_2_0", 0, 0, &code, &errors);
+            HRESULT hr = compile(hlsl, strlen(hlsl), argv[i], NULL, NULL, "main", ps ? "ps_2_0" : "vs_2_0", 0, 0, &code, &errors);
             if (FAILED(hr)) {
                 printf("%s: compile: %s\n", argv[i], errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "?");
                 bad++;
