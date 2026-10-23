@@ -5,7 +5,7 @@
 
    obiwan.exe <default.xbe> [--trace]
    Game files are read from the folder containing default.xbe; the emulated
-   hard disk is build/xbox_hdd next to the executable. */
+   hard disk is xbox_hdd next to the executable, or RECOMP_HDD. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
@@ -204,7 +204,8 @@ static int run(int argc, char **argv) {
     GetModuleFileNameA(NULL, exe, sizeof exe);
     slash = strrchr(exe, '\\');
     if (slash) *slash = 0;
-    snprintf(hdd_dir, sizeof hdd_dir, "%s\\xbox_hdd", exe);
+    if (getenv("RECOMP_HDD")) snprintf(hdd_dir, sizeof hdd_dir, "%s", getenv("RECOMP_HDD")); /* a scratch disk for test runs */
+    else snprintf(hdd_dir, sizeof hdd_dir, "%s\\xbox_hdd", exe);
     kernel_init(xbe.kernel_thunk, game_dir, hdd_dir);
     g_kernel_call = kernel_call;
     g_host_vcall = host_vcall;

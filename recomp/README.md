@@ -74,8 +74,12 @@ docker compose exec ghidra-mcp bash -c '
 .\build\x86\difftest.exe extracted\default.xbe 3 > build\difftest.jsonl
 .\build\x86\difftest.exe extracted\default.xbe --one 002e0936 1   # one function, seed 1
 
-# 4. Boot the game (translate with `all` and host/hooks.csv first)
-.\build\x86\obiwan.exe extracted\default.xbe --trace       # RECOMP_TRACE_CALLS=1 logs indirect calls too
+# 4. Boot the game (translate with `all` and host/hooks.csv first). It has its own
+#    build tree, build\game (the obiwan.exe in build\x86 goes stale); configure it
+#    once from an x64_x86 VS prompt:
+#      cmake -S recomp -B build\game -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build\game --target obiwan
+.\build\game\obiwan.exe extracted\default.xbe   # a 640x480 window; Esc = START, Enter = A, arrows = stick
 ```
 
 The game reads its files from the folder that holds `default.xbe` and keeps
@@ -85,7 +89,14 @@ next to the executable. Environment switches for unattended runs:
 - `RECOMP_STALL=seconds`: when no frame has been presented for that long,
   print every guest thread's guest and host stack (three samples, then exit).
 - `RECOMP_INPUT="300:START,700:A"`: press a gamepad button for 10 frames at
-  those frame numbers (the attract loop only ends on START).
+  those frame numbers (the attract loop only ends on START). The keyboard
+  stands in for the pad while the game window has focus: Esc = START,
+  Enter = A, Space = B, Backspace = BACK, arrows = left stick.
+- Scripts for relaunched runs: `RECOMP_INPUT` and `RECOMP_SHOT` take
+  `this run|next run|...`; each relaunch gets what follows the first `|`,
+  and its shots are named `build\shot_<run>_<frame>.bmp`.
+- `RECOMP_HDD=dir`: use another emulated hard disk than `xbox_hdd` next to
+  the executable (a scratch copy for test runs; the real one keeps saves).
 - `RECOMP_LAUNCH=path`: boot with saved launch data instead of a cold boot.
   When the game relaunches itself (`XLaunchNewImageA`) the host saves the
   data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.

@@ -7,6 +7,7 @@
 
 int  r_init(uint32_t width, uint32_t height);
 int  r_ready(void); /* a device exists */
+int  r_has_focus(void); /* the game window is the foreground window */
 void r_present(void);
 void r_clear(uint32_t xbox_flags, uint32_t color, float z, uint32_t stencil);
 
@@ -26,7 +27,7 @@ void r_create_pixel_shader(uint32_t handle, const uint32_t *psdef); /* D3DPIXELS
 void r_set_stream(uint32_t stream, uint32_t vb_object, uint32_t stride);
 void r_draw(uint32_t prim, uint32_t start_vertex, uint32_t vertex_count);
 void r_draw_up(uint32_t prim, uint32_t vertex_count, uint32_t data, uint32_t stride);
-void r_draw_indexed(uint32_t prim, uint32_t vertex_count, uint32_t index_data);
+void r_draw_indexed(uint32_t prim, uint32_t vertex_count, uint32_t index_data, uint32_t base_vertex);
 
 /* D3DSBT_ALL state blocks: the whole device state, captured at creation and
    by Capture, restored by Apply. Tokens are never 0. */

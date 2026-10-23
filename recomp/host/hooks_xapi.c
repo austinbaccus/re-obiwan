@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include "kernel.h"
+#include "render.h"
 
 #define HOOK(name) void hook_##name(Ctx *ctx)
 #define RET(v, n) do { SET_EAX(ctx, (v)); RET_STDCALL(ctx, (n)); return; } while (0)
@@ -39,6 +40,17 @@ HOOK(XLaunchNewImageA) {
         fclose(f);
     }
     SetEnvironmentVariableA("RECOMP_LAUNCH", NULL); /* a replayed run relaunches with the new data, not the replayed file */
+    /* scripted runs: RECOMP_INPUT and RECOMP_SHOT hold "this run|next run|...";
+       the new process gets what follows the first '|' (nothing if none), and
+       RECOMP_RUN counts the relaunches (it names the shots) */
+    static const char *const per_run[] = {"RECOMP_INPUT", "RECOMP_SHOT"};
+    for (int i = 0; i < 2; i++) {
+        const char *v = getenv(per_run[i]), *bar = v ? strchr(v, '|') : NULL;
+        SetEnvironmentVariableA(per_run[i], bar ? bar + 1 : NULL);
+    }
+    char run[16];
+    snprintf(run, sizeof run, "%d", (getenv("RECOMP_RUN") ? atoi(getenv("RECOMP_RUN")) : 0) + 1);
+    SetEnvironmentVariableA("RECOMP_RUN", run);
     STARTUPINFOA si = {sizeof si};
     PROCESS_INFORMATION pi;
     char cmd[2048];
@@ -95,7 +107,8 @@ static uint16_t scripted_buttons(uint8_t *a, uint8_t *b, uint8_t *x, uint8_t *y)
     if (!script) return 0;
     uint32_t frame = d3d_frame_count();
     uint16_t buttons = 0;
-    for (const char *p = script; *p; ) {
+    const char *end = strchr(script, '|'); /* '|' starts the next run's script */
+    for (const char *p = script; *p && (!end || p < end); ) {
         char name[16] = "";
         unsigned at = 0;
         if (sscanf(p, "%u:%15[A-Za-z]", &at, name) == 2 && frame >= at && frame < at + 10) {
@@ -123,16 +136,21 @@ HOOK(XInputGetState) {
     if (!packet) fprintf(stderr, "input: the game polls the gamepad (frame %u)\n", d3d_frame_count());
     memset(MEM(state), 0, 0x16); /* XINPUT_STATE: dwPacketNumber, then the packed XINPUT_GAMEPAD at +4 */
     WR32(MEM(state), ++packet);
-    /* keyboard as a stand-in until real input is wired: arrows = left stick, Enter = A, Esc = START */
+    /* keyboard as a stand-in until real input is wired: arrows = left stick, Enter = A, Esc = START;
+       only while the game window has focus (GetAsyncKeyState sees keys typed anywhere) */
     int16_t lx = 0, ly = 0;
-    if (GetAsyncKeyState(VK_LEFT) & 0x8000) lx = -32000;
-    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
-    if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;
-    if (GetAsyncKeyState(VK_DOWN) & 0x8000) ly = -32000;
-    uint8_t a = (GetAsyncKeyState(VK_RETURN) & 0x8000) ? 255 : 0, b = (GetAsyncKeyState(VK_SPACE) & 0x8000) ? 255 : 0, x = 0, y = 0;
+    uint8_t a = 0, b = 0, x = 0, y = 0;
     uint16_t buttons = 0;
-    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
-    if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+    if (r_has_focus()) {
+        if (GetAsyncKeyState(VK_LEFT) & 0x8000) lx = -32000;
+        if (GetAsyncKeyState(VK_RIGHT) & 0x8000) lx = 32000;
+        if (GetAsyncKeyState(VK_UP) & 0x8000) ly = 32000;
+        if (GetAsyncKeyState(VK_DOWN) & 0x8000) ly = -32000;
+        if (GetAsyncKeyState(VK_RETURN) & 0x8000) a = 255;
+        if (GetAsyncKeyState(VK_SPACE) & 0x8000) b = 255;
+        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) buttons |= 0x0010; /* START */
+        if (GetAsyncKeyState(VK_BACK) & 0x8000) buttons |= 0x0020;   /* BACK */
+    }
     buttons |= scripted_buttons(&a, &b, &x, &y);
     WR16(MEM(state + 4), buttons);
     WR8(MEM(state + 6), a); /* A */

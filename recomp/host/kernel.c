@@ -1485,8 +1485,10 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
     g_launch_data_page_addr = kmem_alloc(4, 4); /* LaunchDataPage is a pointer variable: NULL = cold boot */
     {   /* a relaunch (XLaunchNewImageA) left launch.bin: build the LAUNCH_DATA_PAGE
            {Header {dwLaunchDataType, dwTitleId, szLaunchPath[520], dwFlags}, pad, LaunchData[3072]} */
-        char file[MAX_PATH];
-        snprintf(file, sizeof file, "%s\\..\\launch.bin", hdd_dir);
+        char file[MAX_PATH], dir[MAX_PATH]; /* next to the executable, where XLaunchNewImageA writes it */
+        GetModuleFileNameA(NULL, dir, sizeof dir);
+        if (strrchr(dir, '\\')) *strrchr(dir, '\\') = 0;
+        snprintf(file, sizeof file, "%s\\launch.bin", dir);
         if (getenv("RECOMP_LAUNCH")) snprintf(file, sizeof file, "%s", getenv("RECOMP_LAUNCH")); /* replay a saved launch */
         FILE *f = fopen(file, "rb");
         if (f) {
@@ -1499,7 +1501,7 @@ void kernel_init(uint32_t thunk_table, const char *game_dir, const char *hdd_dir
             fclose(f);
             if (!getenv("RECOMP_LAUNCH")) { /* keep it as launch.last.bin for RECOMP_LAUNCH replays */
                 char keep[MAX_PATH];
-                snprintf(keep, sizeof keep, "%s\\..\\launch.last.bin", hdd_dir);
+                snprintf(keep, sizeof keep, "%s\\launch.last.bin", dir);
                 MoveFileExA(file, keep, MOVEFILE_REPLACE_EXISTING);
             }
             WR32(MEM(g_launch_data_page_addr), page);

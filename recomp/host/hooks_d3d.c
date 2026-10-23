@@ -235,7 +235,15 @@ HOOK(D3DDevice_SetTextureState_TexCoordIndex) { if (g_render) r_set_tss(ARG(ctx,
 HOOK(D3DDevice_SetTexture) { if (g_render) r_set_texture(ARG(ctx, 0), ARG(ctx, 1)); RET(D3DDevice_SetTexture, 0); }
 HOOK(D3DDevice_SetStreamSource) { if (g_render) r_set_stream(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2)); RET(D3DDevice_SetStreamSource, 0); }
 static uint32_t g_indices, g_index_base;
-HOOK(D3DDevice_SetIndices) { g_indices = ARG(ctx, 0); g_index_base = ARG(ctx, 1); RET(D3DDevice_SetIndices, 0); }
+/* (pIndexBuffer, BaseVertexIndex): like the original (0x36b070), publish the
+   index data in D3D's global (0x37aa64), which the game's draw code adds its
+   start index to, and keep the buffer and base in the device */
+HOOK(D3DDevice_SetIndices) {
+    g_indices = ARG(ctx, 0); g_index_base = ARG(ctx, 1);
+    WR32(MEM(0x0037aa64), g_indices ? RD32(MEM(g_indices + O_DATA)) : 0);
+    WR32(MEM(g_device + 0x47c), g_indices); WR32(MEM(g_device + 0x478), g_index_base);
+    RET(D3DDevice_SetIndices, 0);
+}
 HOOK(D3DDevice_SetVertexShader) { if (g_render) r_set_vertex_shader(ARG(ctx, 0)); RET(D3DDevice_SetVertexShader, 0); }
 HOOK(D3DDevice_SetVertexShaderConstant) { RET(D3DDevice_SetVertexShaderConstant, 0); }
 HOOK(D3DDevice_SetPixelShader) { if (g_render) r_set_pixel_shader(ARG(ctx, 0)); RET(D3DDevice_SetPixelShader, 0); }
@@ -278,7 +286,7 @@ HOOK(D3DDevice_DrawVertices) { if (g_render) r_draw(ARG(ctx, 0), ARG(ctx, 1), AR
 HOOK(D3DDevice_DrawVerticesUP) { if (g_render) r_draw_up(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), ARG(ctx, 3)); RET(D3DDevice_DrawVerticesUP, 0); }
 HOOK(D3DDevice_DrawIndexedVertices) {
     /* (PrimitiveType, VertexCount, pIndexData) */
-    if (g_render) r_draw_indexed(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2));
+    if (g_render) r_draw_indexed(ARG(ctx, 0), ARG(ctx, 1), ARG(ctx, 2), g_index_base);
     RET(D3DDevice_DrawIndexedVertices, 0);
 }
 HOOK(D3DDevice_DrawIndexedVerticesUP) {

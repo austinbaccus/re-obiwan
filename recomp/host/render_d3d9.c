@@ -50,6 +50,7 @@ static void pump(void) {
 }
 
 int r_ready(void) { return g_dev != NULL; }
+int r_has_focus(void) { return g_hwnd && GetForegroundWindow() == g_hwnd; }
 
 int r_init(uint32_t width, uint32_t height) {
     if (g_dev) return 1;
@@ -223,32 +224,6 @@ static uint32_t to_argb(uint32_t fmt, const uint8_t *p) {
     }
 }
 
-/* Interim: the front end fills some textures of swizzled formats (its
-   bitmaps: logo, portraits, button icons) with linear rows and swizzles
-   others itself (font atlases), and why is not understood yet. Pick the
-   layout under which horizontally adjacent texels differ least: real
-   images are smooth, mis-read ones are not. */
-static uint32_t morton_index(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
-    uint32_t r = 0, bit = 0;
-    for (uint32_t i = 1; i < w || i < h; i <<= 1) {
-        if (i < w) r |= ((x & i) ? 1u : 0u) << bit++;
-        if (i < h) r |= ((y & i) ? 1u : 0u) << bit++;
-    }
-    return r;
-}
-static int looks_linear(const uint8_t *src, uint32_t w, uint32_t h, uint32_t bpp) {
-    if (w < 8 || h < 8 || getenv("RECOMP_NO_LAYOUT_GUESS")) return 0;
-    uint64_t lin = 0, swz = 0;
-    uint32_t step = h / 32 ? h / 32 : 1;
-    for (uint32_t y = 0; y < h; y += step)
-        for (uint32_t x = 0; x + 1 < w; x++) {
-            const uint8_t *a = src + (y * w + x) * bpp, *b = a + bpp;
-            const uint8_t *c = src + morton_index(x, y, w, h) * bpp, *d = src + morton_index(x + 1, y, w, h) * bpp;
-            for (uint32_t k = 0; k < bpp; k++) { lin += abs(a[k] - b[k]); swz += abs(c[k] - d[k]); }
-        }
-    return lin < swz;
-}
-
 static void upload(TexSlot *t) {
     uint32_t w, h, fmt, pitch;
     d3d_describe(t->guest, 0, &w, &h, &fmt, &pitch);
@@ -267,8 +242,10 @@ static void upload(TexSlot *t) {
         t->w = w; t->h = h; t->fmt = fmt;
     }
     const uint8_t *src = MEM(data);
+    /* the format code decides: given the real D3DSURFACE_DESC, the game lays
+       its bitmaps out to match their format codes (with zero sizes it had
+       written swizzled-format bitmaps as linear rows, #26) */
     t->linear = is_linear(fmt) || d3d_has_linear_layout(t->guest);
-    if (!t->linear && !dxt && looks_linear(src, w, h, bpp_of(fmt))) t->linear = 1;
     D3DLOCKED_RECT lr;
     if (FAILED(IDirect3DTexture9_LockRect(t->tex, 0, &lr, NULL, 0))) return;
     if (dxt) {
@@ -732,11 +709,17 @@ void r_draw_up(uint32_t prim, uint32_t n, uint32_t data, uint32_t stride) {
     draw_up(prim, n, MEM(data), stride ? stride : fvf_stride(g_fvf));
 }
 
-void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data) {
-    if (!g_dev || !g_fvf || !g_stream_vb || !index_data || !n) return;
+void r_draw_indexed(uint32_t prim, uint32_t n, uint32_t index_data, uint32_t base_vertex) {
+    if (!g_dev || !g_fvf || !g_stream_vb || !n) return;
+    if (index_data < 0x10000) { /* no index buffer behind it: report once rather than read low memory */
+        static int warned;
+        if (!warned++) fprintf(stderr, "render: indexed draw with index data %08x skipped\n", index_data);
+        return;
+    }
     uint32_t stride = g_stream_stride ? g_stream_stride : fvf_stride(g_fvf);
     uint32_t data = RD32(MEM(g_stream_vb + 4));
     if (!data) return;
+    data += base_vertex * stride; /* SetIndices' BaseVertexIndex offsets every index */
     const uint16_t *idx = (const uint16_t *)MEM(index_data);
     uint32_t maxv = 0;
     for (uint32_t i = 0; i < n; i++) if (idx[i] > maxv) maxv = idx[i];
@@ -771,8 +754,8 @@ void r_clear(uint32_t flags, uint32_t color, float z, uint32_t stencil) {
 /* RECOMP_SHOT="frame,frame,...": save the back buffer as build\shot_<frame>.bmp
    before those presents; works whether or not the window is on screen */
 static void shot(uint32_t frame) {
-    const char *list = getenv("RECOMP_SHOT");
-    for (const char *p = list; p && *p; p = strchr(p, ',') ? strchr(p, ',') + 1 : "")
+    const char *list = getenv("RECOMP_SHOT"), *end = list ? strchr(list, '|') : NULL; /* '|': the next run's list */
+    for (const char *p = list; p && *p && (!end || p < end); p = strchr(p, ',') ? strchr(p, ',') + 1 : "")
         if ((uint32_t)atoi(p) == frame) goto take;
     return;
 take:;
@@ -785,7 +768,8 @@ take:;
         SUCCEEDED(IDirect3DDevice9_GetRenderTargetData(g_dev, bb, sys)) &&
         SUCCEEDED(IDirect3DSurface9_LockRect(sys, &lr, NULL, D3DLOCK_READONLY))) {
         char name[64];
-        snprintf(name, sizeof name, "build\\shot_%u.bmp", frame);
+        if (getenv("RECOMP_RUN")) snprintf(name, sizeof name, "build\\shot_%s_%u.bmp", getenv("RECOMP_RUN"), frame); /* a relaunched run */
+        else snprintf(name, sizeof name, "build\\shot_%u.bmp", frame);
         FILE *f = fopen(name, "wb");
         if (f) {
             uint32_t w = d.Width, h = d.Height, size = 54 + w * 4 * h;
