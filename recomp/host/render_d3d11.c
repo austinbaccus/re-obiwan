@@ -55,7 +55,14 @@ static ID3D11DeviceContext *g_ctx;
 static IDXGISwapChain1 *g_swap;
 static ID3D11Texture2D *g_swap_buf;
 static ID3D11InfoQueue *g_debug;     /* RECOMP_D3DDEBUG: the debug layer's messages */
-static uint32_t g_width, g_height;
+static uint32_t g_width, g_height;   /* the back buffer the game sees (640x480) */
+/* RECOMP_RES: the host back buffer is g_out_w x g_out_h and back-buffer
+   viewports are scaled to it; the game still draws for g_width x g_height.
+   The swap chain is g_win_w x g_win_h (the window, or the whole monitor
+   with RECOMP_FULLSCREEN) and shows the back buffer centred in it. */
+static uint32_t g_out_w, g_out_h, g_win_w, g_win_h;
+static float g_sx = 1, g_sy = 1;
+static ID3D11RenderTargetView *g_swap_rtv;
 static UINT g_present_interval, g_present_flags;
 static int g_drawlog = -1;           /* RECOMP_DRAWLOG=N: describe the first N draws and transforms */
 static uint32_t g_frame;             /* presents so far */
@@ -227,7 +234,7 @@ void r_set_render_target(int back_buffer, uint32_t w, uint32_t h, int z_kind, ui
     }
     g_dsv = NULL; g_dsv_res = NULL;
     if (z_kind == 1) {
-        if (w == g_width && h == g_height) { g_dsv = g_bb_dsv; g_dsv_res = (ID3D11Resource *)g_bb_z; }
+        if (back_buffer || (w == g_out_w && h == g_out_h)) { g_dsv = g_bb_dsv; g_dsv_res = (ID3D11Resource *)g_bb_z; }
         else { /* an off-screen target of another size: a depth buffer of its own */
             if (!g_off_dsv || g_offz_w != w || g_offz_h != h) {
                 REL(g_off_dsv); REL(g_off_z);
@@ -561,7 +568,9 @@ static void apply_states(const Bound *b) {
     nr.FillMode = D3D11_FILL_SOLID;
     nr.CullMode = s->cull == D3DCULL_CW ? D3D11_CULL_FRONT : s->cull == D3DCULL_CCW ? D3D11_CULL_BACK : D3D11_CULL_NONE;
     nr.DepthBias = s->polyfill ? (INT)s->polyunits : 0;
-    nr.SlopeScaledDepthBias = s->polyfill ? s->polyslope : 0;
+    /* the slope is per pixel: a scaled-up back buffer has flatter slopes */
+    int scaled = g_rtv == g_bb_rtv;
+    nr.SlopeScaledDepthBias = s->polyfill ? s->polyslope * (scaled ? max(g_sx, g_sy) : 1) : 0;
     nr.DepthClipEnable = TRUE;
     if (!rs || memcmp(&nr, &rd, sizeof nr)) {
         REL(rs);
@@ -570,7 +579,9 @@ static void apply_states(const Bound *b) {
     }
     ID3D11DeviceContext_RSSetState(g_ctx, rs);
 
-    D3D11_VIEWPORT vp = {s->vp[0], s->vp[1], s->vp[2], s->vp[3], s->vp[4], s->vp[5]};
+    /* the game's units: the shaders map pretransformed vertices through s->vp */
+    float kx = scaled ? g_sx : 1, ky = scaled ? g_sy : 1;
+    D3D11_VIEWPORT vp = {s->vp[0] * kx, s->vp[1] * ky, s->vp[2] * kx, s->vp[3] * ky, s->vp[4], s->vp[5]};
     ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
 
     for (int i = 0; i < 4; i++) {
@@ -1262,7 +1273,8 @@ static void probe(void) {
     k++;
     if (!one) one = texture_2d(1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
     if (!one) return;
-    D3D11_BOX box = {(UINT)px, (UINT)py, 0, (UINT)px + 1, (UINT)py + 1, 1};
+    UINT hx = (UINT)((px + 0.5f) * g_sx), hy = (UINT)((py + 0.5f) * g_sy); /* the game's pixel, on the host back buffer */
+    D3D11_BOX box = {hx, hy, 0, hx + 1, hy + 1, 1};
     ID3D11DeviceContext_CopySubresourceRegion(g_ctx, (ID3D11Resource *)one, 0, 0, 0, 0, (ID3D11Resource *)g_bb, 0, &box);
     D3D11_MAPPED_SUBRESOURCE m;
     if (FAILED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)one, 0, D3D11_MAP_READ, 0, &m))) return;
@@ -1495,12 +1507,12 @@ void r_clear(uint32_t flags, uint32_t color, float z, uint32_t stencil) {
 static void shot(uint32_t frame) {
     char name[64];
     if (!rc_shot_wanted(frame, name, sizeof name)) return;
-    ID3D11Texture2D *sys = texture_2d(g_width, g_height, DXGI_FORMAT_B8G8R8A8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
+    ID3D11Texture2D *sys = texture_2d(g_out_w, g_out_h, DXGI_FORMAT_B8G8R8A8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
     if (!sys) return;
     ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)sys, (ID3D11Resource *)g_bb);
     D3D11_MAPPED_SUBRESOURCE m;
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)sys, 0, D3D11_MAP_READ, 0, &m))) {
-        if (rc_write_bmp(name, m.pData, m.RowPitch, g_width, g_height)) fprintf(stderr, "render: saved %s\n", name);
+        if (rc_write_bmp(name, m.pData, m.RowPitch, g_out_w, g_out_h)) fprintf(stderr, "render: saved %s\n", name);
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)sys, 0);
     }
     REL(sys);
@@ -1509,7 +1521,16 @@ static void shot(uint32_t frame) {
 void r_present(void) {
     if (!g_dev) return;
     shot(++g_frame);
-    ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)g_swap_buf, (ID3D11Resource *)g_bb);
+    if (g_win_w == g_out_w && g_win_h == g_out_h)
+        ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)g_swap_buf, (ID3D11Resource *)g_bb);
+    else { /* centred, pixel for pixel, black around it (cropped if larger) */
+        static const float black[4] = {0, 0, 0, 1};
+        ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_swap_rtv, black);
+        UINT w = min(g_out_w, g_win_w), h = min(g_out_h, g_win_h);
+        D3D11_BOX box = {(g_out_w - w) / 2, (g_out_h - h) / 2, 0, (g_out_w - w) / 2 + w, (g_out_h - h) / 2 + h, 1};
+        ID3D11DeviceContext_CopySubresourceRegion(g_ctx, (ID3D11Resource *)g_swap_buf, 0, (g_win_w - w) / 2, (g_win_h - h) / 2, 0,
+                                                  (ID3D11Resource *)g_bb, 0, &box);
+    }
     HRESULT hr = IDXGISwapChain1_Present(g_swap, g_present_interval, g_present_flags);
     if (FAILED(hr)) { static int warned; if (!warned++) fprintf(stderr, "render: present failed %08lx\n", hr); }
     ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_rtv, g_dsv); /* flip model unbinds */
@@ -1527,18 +1548,34 @@ static ID3D11Buffer *buffer(UINT size, UINT bind) {
 int r_init(uint32_t width, uint32_t height) {
     if (g_dev) return 1;
     g_drawlog = getenv("RECOMP_DRAWLOG") ? atoi(getenv("RECOMP_DRAWLOG")) : 0;
+    SetProcessDPIAware(); /* window and monitor sizes in real pixels, not scaled by Windows */
     g_width = width; g_height = height;
+    g_out_w = width; g_out_h = height;
+    const char *res = getenv("RECOMP_RES");
+    unsigned rw, rh;
+    if (res && sscanf(res, "%ux%u", &rw, &rh) == 2 && rw >= 64 && rh >= 48 && rw <= 16384 && rh <= 16384) { g_out_w = rw; g_out_h = rh; }
+    g_sx = (float)g_out_w / width; g_sy = (float)g_out_h / height;
+    int fullscreen = getenv("RECOMP_FULLSCREEN") != NULL;
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
-    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    wc.hCursor = fullscreen ? NULL : LoadCursorA(NULL, IDC_ARROW);
     wc.lpszClassName = "ObiWanRecomp";
     RegisterClassA(&wc);
-    RECT r = {0, 0, (LONG)width, (LONG)height};
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    AdjustWindowRect(&r, style, FALSE);
-    g_hwnd = CreateWindowA(wc.lpszClassName, "Star Wars: Obi-Wan (recompiled)", style, CW_USEDEFAULT, CW_USEDEFAULT,
-                           r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    if (fullscreen) { /* borderless, covering the primary monitor */
+        MONITORINFO mi = {sizeof mi};
+        GetMonitorInfoA(MonitorFromPoint((POINT){0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+        g_win_w = mi.rcMonitor.right - mi.rcMonitor.left; g_win_h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+        g_hwnd = CreateWindowA(wc.lpszClassName, "Star Wars: Obi-Wan (recompiled)", WS_POPUP, mi.rcMonitor.left, mi.rcMonitor.top,
+                               g_win_w, g_win_h, NULL, NULL, wc.hInstance, NULL);
+    } else {
+        g_win_w = g_out_w; g_win_h = g_out_h;
+        RECT r = {0, 0, (LONG)g_win_w, (LONG)g_win_h};
+        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        AdjustWindowRect(&r, style, FALSE);
+        g_hwnd = CreateWindowA(wc.lpszClassName, "Star Wars: Obi-Wan (recompiled)", style, CW_USEDEFAULT, CW_USEDEFAULT,
+                               r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    }
     if (!g_hwnd) { fprintf(stderr, "render: no window (error %lu)\n", GetLastError()); return 0; }
     ShowWindow(g_hwnd, SW_SHOW);
 
@@ -1573,7 +1610,7 @@ int r_init(uint32_t width, uint32_t height) {
         REL(f5);
     }
     int novsync = getenv("RECOMP_NOVSYNC") != NULL;
-    DXGI_SWAP_CHAIN_DESC1 sd = {width, height, DXGI_FORMAT_B8G8R8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2,
+    DXGI_SWAP_CHAIN_DESC1 sd = {g_win_w, g_win_h, DXGI_FORMAT_B8G8R8A8_UNORM, FALSE, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 2,
                                 DXGI_SCALING_STRETCH, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_ALPHA_MODE_UNSPECIFIED,
                                 tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0};
     hr = IDXGIFactory2_CreateSwapChainForHwnd(factory, (IUnknown *)g_dev, g_hwnd, &sd, NULL, NULL, &g_swap);
@@ -1588,9 +1625,10 @@ int r_init(uint32_t width, uint32_t height) {
     g_present_flags = novsync && tearing ? DXGI_PRESENT_ALLOW_TEARING : 0;
     IDXGISwapChain1_GetBuffer(g_swap, 0, &IID_ID3D11Texture2D, (void **)&g_swap_buf);
 
-    g_bb = texture_2d(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_RENDER_TARGET, D3D11_USAGE_DEFAULT, 0);
+    g_bb = texture_2d(g_out_w, g_out_h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_RENDER_TARGET, D3D11_USAGE_DEFAULT, 0);
     if (!g_swap_buf || !g_bb || FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_bb, NULL, &g_bb_rtv)) ||
-        !depth_buffer(width, height, &g_bb_z, &g_bb_dsv)) {
+        FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_swap_buf, NULL, &g_swap_rtv)) ||
+        !depth_buffer(g_out_w, g_out_h, &g_bb_z, &g_bb_dsv)) {
         fprintf(stderr, "render: no back buffer\n");
         return 0;
     }
@@ -1610,8 +1648,9 @@ int r_init(uint32_t width, uint32_t height) {
     default_state();
     g_rtv = g_bb_rtv; g_dsv = g_bb_dsv; g_dsv_res = (ID3D11Resource *)g_bb_z;
     ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_rtv, g_dsv);
-    fprintf(stderr, "render: Direct3D 11 device (feature level %u.%u, %ls), %ux%u window%s\n", got >> 12, (got >> 8) & 0xf, ad.Description,
-            width, height, g_debug ? ", debug layer" : "");
+    fprintf(stderr, "render: Direct3D 11 device (feature level %u.%u, %ls), %ux%u rendered at %ux%u in a %ux%u %s%s\n", got >> 12,
+            (got >> 8) & 0xf, ad.Description, width, height, g_out_w, g_out_h, g_win_w, g_win_h, fullscreen ? "borderless window" : "window",
+            g_debug ? ", debug layer" : "");
     debug_messages();
     return 1;
 }

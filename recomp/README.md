@@ -133,6 +133,14 @@ next to the executable. Environment switches for unattended runs:
   data as `launch.bin`, restarts, and keeps it as `launch.last.bin`.
 - `RECOMP_SHOT="900,1200"`: save the back buffer as `build\shot_<frame>.bmp`
   at those frames (works with the window hidden or covered).
+- `RECOMP_RES=1920x1440`: render at that size (Direct3D 11 only). The game
+  still draws for its 640x480 back buffer; the host's back buffer, depth
+  buffer and back-buffer viewports are scaled, so 3D, text and the HUD are
+  all drawn at the higher resolution. Off-screen targets (shadow buffers)
+  keep their sizes. Screenshots are saved at the rendered size.
+- `RECOMP_FULLSCREEN=1`: a borderless window covering the primary monitor,
+  with the picture centred pixel for pixel and black around it (Alt+F4
+  quits).
 - `RECOMP_FIXEDFPS=60`: the guest's clocks advance 1/60 s per presented
   frame (and with the host's while nothing is presented, as when loading),
   so a frame number shows the same moment however fast the host runs.
