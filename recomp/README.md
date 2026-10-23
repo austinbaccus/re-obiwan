@@ -144,6 +144,12 @@ next to the executable. Environment switches for unattended runs:
   layer (HUD, text, menus) stays 4:3 in the middle, clipped to it.
   Untextured draws over the whole screen (fades, flashes, cinema bars)
   still cover the full width.
+- F3 (or `RECOMP_FPS=1` from the start): a performance overlay in the top
+  left corner (Direct3D 11): frames per second, frame time and the worst
+  one, the CPU time of the thread that presents, and where a frame goes:
+  game code (the rest), draw submission with texture uploads and shader
+  compiles, and present. `RECOMP_FPSLOG=1` also prints it to stderr
+  twice a second.
 - `RECOMP_FULLSCREEN=1`: a borderless window covering the primary monitor,
   with the picture centred pixel for pixel and black around it (Alt+F4
   quits).

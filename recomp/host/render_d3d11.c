@@ -46,6 +46,7 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "gdi32.lib")
 
 #define REL(p) do { if (p) { IUnknown_Release((IUnknown *)(p)); (p) = NULL; } } while (0)
 
@@ -66,6 +67,16 @@ static ID3D11RenderTargetView *g_swap_rtv;
 static UINT g_present_interval, g_present_flags;
 static int g_drawlog = -1;           /* RECOMP_DRAWLOG=N: describe the first N draws and transforms */
 static uint32_t g_frame;             /* presents so far */
+
+/* F3 (or RECOMP_FPS=1): a performance overlay in the top left corner. Times
+   are QueryPerformanceCounter ticks summed over the frames since the
+   overlay's text was last made. */
+static volatile int g_hud_on;
+static struct {
+    int64_t draw, upload, compile, present, frame_max;
+    uint32_t frames, draws, uploads, compiles;
+} g_perf;
+static int64_t qpc(void) { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; }
 
 /* ---- device state ------------------------------------------------------------ */
 /* All of it in one place: a state block (D3DSBT_ALL) is a copy. Values are
@@ -129,7 +140,10 @@ static void default_state(void) {
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CLOSE: fprintf(stderr, "render: window closed\n"); ExitProcess(0);
-    case WM_KEYDOWN: if (wp == VK_F12) { fprintf(stderr, "render: F12\n"); } return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_F12) fprintf(stderr, "render: F12\n");
+        if (wp == VK_F3) g_hud_on = !g_hud_on;
+        return 0;
     }
     return DefWindowProcA(h, msg, wp, lp);
 }
@@ -293,7 +307,13 @@ void r_resource_freed(uint32_t guest) {
 
 /* DXT stays compressed (BC1..3) where Direct3D 11 takes it: sizes in whole
    blocks; anything else becomes B8G8R8A8 */
+static void upload_now(TexSlot *t);
 static void upload(TexSlot *t) {
+    int64_t t0 = qpc();
+    upload_now(t);
+    g_perf.upload += qpc() - t0; g_perf.uploads++;
+}
+static void upload_now(TexSlot *t) {
     RcTex g;
     if (!rc_texture(t->guest, &g)) return;
     int compressed = g.dxt && g.w % 4 == 0 && g.h % 4 == 0;
@@ -619,7 +639,14 @@ static void apply_states(const Bound *b) {
 typedef HRESULT(WINAPI *D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const void *, void *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
 
 /* HLSL to bytecode through d3dcompiler_47 (loaded on first use); NULL on failure */
+static ID3DBlob *compile_hlsl_now(const char *hlsl, const char *target, uint32_t handle);
 static ID3DBlob *compile_hlsl(const char *hlsl, const char *target, uint32_t handle) {
+    int64_t t0 = qpc();
+    ID3DBlob *b = compile_hlsl_now(hlsl, target, handle);
+    g_perf.compile += qpc() - t0; g_perf.compiles++;
+    return b;
+}
+static ID3DBlob *compile_hlsl_now(const char *hlsl, const char *target, uint32_t handle) {
     static D3DCompileFn compile;
     static int missing;
     if (!compile && !missing) {
@@ -1333,7 +1360,13 @@ static float squeeze_2d(const uint8_t *verts, uint32_t stride, uint32_t first, u
     return full && !textured ? 0 : 1 / wide;
 }
 
+static void draw_now(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx);
 static void draw(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
+    int64_t t0 = qpc();
+    draw_now(prim, n, verts, stride, idx);
+    g_perf.draw += qpc() - t0; g_perf.draws++;
+}
+static void draw_now(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t stride, const uint16_t *idx) {
     if (!g_dev || !n || !stride) return;
     if (g_vsh ? !vshader_ready(g_vsh) : !g_st.fvf || !(g_st.fvf & 0xE)) return;
     sync_deferred_states();
@@ -1562,6 +1595,85 @@ static void shot(uint32_t frame) {
     REL(sys);
 }
 
+/* The overlay's text is drawn with GDI into a bitmap twice a second and
+   copied onto each presented frame. "game" is the rest of the frame: the
+   recompiled game code, its hooks and waits. */
+static void perf_overlay(void) {
+    static int64_t freq, last, since;
+    static HDC dc;
+    static HBITMAP bmp;
+    static uint32_t *bits;
+    static ID3D11Texture2D *tex;
+    static UINT bw, bh, tw, th;
+    static int inited;
+    static uint64_t cpu_since; /* this thread's CPU time (100 ns units) when the window began */
+    if (!inited) {
+        inited = 1;
+        LARGE_INTEGER f; QueryPerformanceFrequency(&f); freq = f.QuadPart;
+        last = since = qpc();
+        if (getenv("RECOMP_FPS")) g_hud_on = 1;
+    }
+    int64_t now = qpc(), ft = now - last;
+    last = now;
+    g_perf.frames++;
+    if (ft > g_perf.frame_max) g_perf.frame_max = ft;
+    if (now - since >= freq / 2) {
+        double n = g_perf.frames, ms = 1000.0 / freq, span = (now - since) * ms;
+        double draw = g_perf.draw * ms / n, present = g_perf.present * ms / n, frame = span / n;
+        /* the CPU time of the thread that presents: below "game", the rest is waiting */
+        FILETIME c, e, k, u;
+        GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u);
+        uint64_t cpu = ((uint64_t)k.dwHighDateTime << 32 | k.dwLowDateTime) + ((uint64_t)u.dwHighDateTime << 32 | u.dwLowDateTime);
+        double busy = cpu_since ? (cpu - cpu_since) / 1e4 / n : 0;
+        cpu_since = cpu;
+        char line[3][160];
+        snprintf(line[0], sizeof line[0], "%.0f fps   %.1f ms   worst %.1f ms   (render thread busy %.1f ms)", n * 1000 / span, frame,
+                 g_perf.frame_max * ms, busy);
+        snprintf(line[1], sizeof line[1], "game %.1f   draw %.1f (textures %.1f, shaders %.1f)   present %.1f ms", frame - draw - present, draw,
+                 g_perf.upload * ms / n, g_perf.compile * ms / n, present);
+        snprintf(line[2], sizeof line[2], "%.0f draws   %u texture uploads   %u shader compiles   in %.1f s", g_perf.draws / n, g_perf.uploads,
+                 g_perf.compiles, span / 1000);
+        if (getenv("RECOMP_FPSLOG")) fprintf(stderr, "perf: %s | %s | %s\n", line[0], line[1], line[2]);
+        memset(&g_perf, 0, sizeof g_perf);
+        since = now;
+        if (!dc) { /* a bitmap for the text, sized for the window */
+            int px = g_win_h / 60 < 14 ? 14 : (int)g_win_h / 60;
+            dc = CreateCompatibleDC(NULL);
+            HFONT font = CreateFontA(-px, 0, 0, 0, FW_BOLD, 0, 0, 0, ANSI_CHARSET, 0, 0, NONANTIALIASED_QUALITY, FIXED_PITCH, "Consolas");
+            SelectObject(dc, font);
+            SIZE sz;
+            GetTextExtentPoint32A(dc, "M", 1, &sz);
+            bw = sz.cx * 84 + 16; bh = sz.cy * 3 + 12;
+            if (bw > g_win_w) bw = g_win_w;
+            if (bh > g_win_h) bh = g_win_h;
+            BITMAPINFO bi = {{sizeof bi.bmiHeader, (LONG)bw, -(LONG)bh, 1, 32, BI_RGB}};
+            bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&bits, NULL, 0);
+            SelectObject(dc, bmp);
+            SetBkMode(dc, TRANSPARENT);
+            tex = texture_2d(bw, bh, DXGI_FORMAT_B8G8R8A8_UNORM, 0, D3D11_USAGE_DEFAULT, 0);
+        }
+        if (bits && tex) {
+            for (UINT i = 0; i < bw * bh; i++) bits[i] = 0x00101010;
+            SIZE sz;
+            tw = 0;
+            for (int i = 0; i < 3; i++) {
+                SetTextColor(dc, i ? RGB(220, 220, 220) : RGB(255, 230, 0));
+                TextOutA(dc, 8, 6 + i * (int)(bh - 12) / 3, line[i], (int)strlen(line[i]));
+                GetTextExtentPoint32A(dc, line[i], (int)strlen(line[i]), &sz);
+                if ((UINT)sz.cx + 16 > tw) tw = sz.cx + 16;
+            }
+            GdiFlush();
+            th = bh;
+            if (tw > bw) tw = bw;
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)tex, 0, NULL, bits, bw * 4, 0);
+        }
+    }
+    if (g_hud_on && tex && tw) {
+        D3D11_BOX box = {0, 0, 0, tw, th, 1};
+        ID3D11DeviceContext_CopySubresourceRegion(g_ctx, (ID3D11Resource *)g_swap_buf, 0, 0, 0, 0, (ID3D11Resource *)tex, 0, &box);
+    }
+}
+
 void r_present(void) {
     if (!g_dev) return;
     shot(++g_frame);
@@ -1575,7 +1687,10 @@ void r_present(void) {
         ID3D11DeviceContext_CopySubresourceRegion(g_ctx, (ID3D11Resource *)g_swap_buf, 0, (g_win_w - w) / 2, (g_win_h - h) / 2, 0,
                                                   (ID3D11Resource *)g_bb, 0, &box);
     }
+    perf_overlay();
+    int64_t t0 = qpc();
     HRESULT hr = IDXGISwapChain1_Present(g_swap, g_present_interval, g_present_flags);
+    g_perf.present += qpc() - t0;
     if (FAILED(hr)) { static int warned; if (!warned++) fprintf(stderr, "render: present failed %08lx\n", hr); }
     ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_rtv, g_dsv); /* flip model unbinds */
     pump();
