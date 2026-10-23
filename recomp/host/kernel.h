@@ -38,7 +38,7 @@ typedef int32_t NTSTATUS_;
 /* Guest-memory arena for everything the kernel hands out (heaps, stacks,
    contiguous memory, kernel objects). */
 void kmem_init(uint32_t start, uint32_t size);
-uint32_t kmem_alloc(uint32_t size, uint32_t align);   /* never fails: traps */
+uint32_t kmem_alloc(uint32_t size, uint32_t align);   /* 0 when the arena is exhausted */
 void kmem_free(uint32_t addr);
 uint32_t kmem_block_size(uint32_t addr);
 uint32_t kmem_block_containing(uint32_t addr);

@@ -387,22 +387,38 @@ void r_set_rs_simple(uint32_t method, uint32_t value) {
     }
 }
 
-/* Xbox D3DRS indices of the deferred group (XDK 3911 numbering, per Cxbx) */
-enum { XRS_FOGENABLE = 92, XRS_FOGTABLEMODE, XRS_FOGSTART, XRS_FOGEND, XRS_FOGDENSITY, XRS_RANGEFOGENABLE,
+/* Xbox D3DRS indices of the deferred group in D3D8 3948: right after the 25
+   simple states (57..81; D3DDevice_SetRenderState at 0x3690c0 sends states
+   below 82 to the simple setter and writes 82..115 into D3D_g_RenderState).
+   The values are the game's own D3D8 values. */
+#define XRS_DEFERRED_FIRST 82
+#define XRS_DEFERRED_COUNT 34
+enum { XRS_FOGENABLE = XRS_DEFERRED_FIRST, XRS_FOGTABLEMODE, XRS_FOGSTART, XRS_FOGEND, XRS_FOGDENSITY, XRS_RANGEFOGENABLE,
        XRS_WRAP0, XRS_WRAP1, XRS_WRAP2, XRS_WRAP3, XRS_LIGHTING, XRS_SPECULARENABLE, XRS_LOCALVIEWER, XRS_COLORVERTEX,
        XRS_BACKSPECULARMATERIALSOURCE, XRS_BACKDIFFUSEMATERIALSOURCE, XRS_BACKAMBIENTMATERIALSOURCE, XRS_BACKEMISSIVEMATERIALSOURCE,
        XRS_SPECULARMATERIALSOURCE, XRS_DIFFUSEMATERIALSOURCE, XRS_AMBIENTMATERIALSOURCE, XRS_EMISSIVEMATERIALSOURCE,
        XRS_BACKAMBIENT, XRS_AMBIENT, XRS_POINTSIZE, XRS_POINTSIZE_MIN, XRS_POINTSPRITEENABLE, XRS_POINTSCALEENABLE,
        XRS_POINTSCALE_A, XRS_POINTSCALE_B, XRS_POINTSCALE_C, XRS_POINTSIZE_MAX, XRS_PATCHEDGESTYLE, XRS_PATCHSEGMENTS };
 
+/* Fog: the NV2A turns a per-vertex fog coordinate (eye distance, or oFog from
+   a vertex shader) into a factor with the FOGTABLEMODE function, and the
+   final combiner blends with the fog colour. Direct3D 9 gets the same from
+   vertex fog for fixed-function draws, from a factor the translated vertex
+   shader computes (constants c96: start, end, density, mode), and leaves
+   draws unfogged whose pixel shader's final combiner ignores fog. */
+static struct { uint32_t enable, mode, range; float start, end, density; } g_fog;
+static uint32_t g_fog_forced_color;
+
+static float as_float(uint32_t v) { float f; memcpy(&f, &v, 4); return f; }
+
 void r_set_rs_deferred(uint32_t state, uint32_t value) {
     switch (state) {
-    case XRS_FOGENABLE: rs(D3DRS_FOGENABLE, value != 0); break;
-    case XRS_FOGTABLEMODE: rs(D3DRS_FOGTABLEMODE, value == 0x2601 ? D3DFOG_LINEAR : value == 0x800 ? D3DFOG_EXP : value == 0x801 ? D3DFOG_EXP2 : D3DFOG_NONE); break;
-    case XRS_FOGSTART: rs(D3DRS_FOGSTART, value); break;
-    case XRS_FOGEND: rs(D3DRS_FOGEND, value); break;
-    case XRS_FOGDENSITY: rs(D3DRS_FOGDENSITY, value); break;
-    case XRS_RANGEFOGENABLE: rs(D3DRS_RANGEFOGENABLE, value != 0); break;
+    case XRS_FOGENABLE: g_fog.enable = value != 0; break;
+    case XRS_FOGTABLEMODE: g_fog.mode = value <= 3 ? value : 0; break;   /* D3DFOG_NONE, EXP, EXP2, LINEAR */
+    case XRS_FOGSTART: g_fog.start = as_float(value); break;
+    case XRS_FOGEND: g_fog.end = as_float(value); break;
+    case XRS_FOGDENSITY: g_fog.density = as_float(value); break;
+    case XRS_RANGEFOGENABLE: g_fog.range = value != 0; break;
     case XRS_WRAP0: case XRS_WRAP1: case XRS_WRAP2: case XRS_WRAP3: rs(D3DRS_WRAP0 + (state - XRS_WRAP0), value); break;
     case XRS_LIGHTING: rs(D3DRS_LIGHTING, value != 0); break;
     case XRS_SPECULARENABLE: rs(D3DRS_SPECULARENABLE, value != 0); break;
@@ -422,6 +438,48 @@ void r_set_rs_deferred(uint32_t state, uint32_t value) {
     case XRS_POINTSCALE_C: rs(D3DRS_POINTSCALE_C, value); break;
     case XRS_POINTSIZE_MAX: rs(D3DRS_POINTSIZE_MAX, value); break;
     default: break;
+    }
+}
+
+/* The deferred states live in D3D_g_RenderState (0x37AC68): the hooked setter
+   stores there like the original, and the game's generic SetRenderState and
+   inline code write there directly. Apply whatever changed before a draw. */
+static void sync_deferred_states(void) {
+    static uint32_t seen[XRS_DEFERRED_COUNT];
+    static int primed;
+    for (uint32_t i = 0; i < XRS_DEFERRED_COUNT; i++) {
+        uint32_t v = RD32(MEM(0x0037ac68 + 4 * (XRS_DEFERRED_FIRST + i)));
+        if (primed && v == seen[i]) continue;
+        seen[i] = v;
+        if (getenv("RECOMP_RSLOG")) fprintf(stderr, "deferred state %u = %08x\n", XRS_DEFERRED_FIRST + i, v);
+        r_set_rs_deferred(XRS_DEFERRED_FIRST + i, v);
+    }
+    primed = 1;
+}
+
+/* fog for the next draw: ps_fog is 0 when the pixel shader's final combiner
+   does not blend fog */
+static void apply_fog(int ps_fog, int vertex_shader) {
+    static int forced = -1;
+    if (forced < 0) { /* RECOMP_FOG=start,end,RRGGBB: linear fog everywhere, to check the fog path */
+        float s, e; unsigned col;
+        const char *f = getenv("RECOMP_FOG");
+        forced = f && sscanf(f, "%f,%f,%x", &s, &e, &col) == 3;
+        if (forced) { g_fog_forced_color = 0xff000000u | col; g_fog.start = s; g_fog.end = e; }
+    }
+    if (forced) { g_fog.enable = 1; g_fog.mode = 3; rs(D3DRS_FOGCOLOR, g_fog_forced_color); }
+    int on = g_fog.enable && g_fog.mode && ps_fog;
+    rs(D3DRS_FOGENABLE, on);
+    if (!on) return;
+    rs(D3DRS_FOGTABLEMODE, D3DFOG_NONE);
+    rs(D3DRS_FOGVERTEXMODE, g_fog.mode);
+    rs(D3DRS_RANGEFOGENABLE, g_fog.range);
+    DWORD start, end, density;
+    memcpy(&start, &g_fog.start, 4); memcpy(&end, &g_fog.end, 4); memcpy(&density, &g_fog.density, 4);
+    rs(D3DRS_FOGSTART, start); rs(D3DRS_FOGEND, end); rs(D3DRS_FOGDENSITY, density);
+    if (vertex_shader) {
+        float c[4] = {g_fog.start, g_fog.end, g_fog.density, (float)g_fog.mode};
+        IDirect3DDevice9_SetVertexShaderConstantF(g_dev, 96, c, 1);
     }
 }
 
@@ -746,7 +804,7 @@ void r_set_vertex_shader(uint32_t handle) {
 /* ---- pixel shaders --------------------------------------------------------- */
 /* Translated like the vertex shaders (ps_2_0); a draw binds the current one,
    or none, so the texture stage states apply */
-typedef struct { uint32_t handle; char *src; size_t len; IDirect3DPixelShader9 *ps; int failed; } PShader;
+typedef struct { uint32_t handle; char *src; size_t len; IDirect3DPixelShader9 *ps; int failed, fog; } PShader;
 #define PSHADERS 64
 static PShader g_pshaders[PSHADERS];
 static PShader *g_psh;
@@ -791,7 +849,7 @@ static int pshader_ready(PShader *s) {
     if (s->failed || !g_dev) return 0;
     s->failed = 1;
     static char hlsl[1 << 16];
-    if (xs_ps_to_hlsl(s->src, s->len, hlsl, sizeof hlsl)) {
+    if (xs_ps_to_hlsl(s->src, s->len, hlsl, sizeof hlsl, &s->fog)) {
         fprintf(stderr, "render: pixel shader %08x not translated: %s\n", s->handle, hlsl);
         return 0;
     }
@@ -804,12 +862,17 @@ static int pshader_ready(PShader *s) {
     return 1;
 }
 
-/* the pixel shader for the next draw, or the fixed-function stages */
+/* the pixel shader for the next draw, or the fixed-function stages; with it
+   the deferred render states and fog */
 static void apply_pixel_shader(void) {
+    sync_deferred_states();
+    int ps_fog = 1;
     if (g_psh && pshader_ready(g_psh)) {
         IDirect3DDevice9_SetPixelShader(g_dev, g_psh->ps);
         IDirect3DDevice9_SetPixelShaderConstantF(g_dev, 0, &g_psc[0][0], 8);
+        ps_fog = g_psh->fog;
     } else IDirect3DDevice9_SetPixelShader(g_dev, NULL);
+    apply_fog(ps_fog, g_vsh != NULL);
 }
 
 void r_create_pixel_shader(uint32_t handle, const uint32_t *def) {

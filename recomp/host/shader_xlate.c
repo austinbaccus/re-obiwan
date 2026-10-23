@@ -28,7 +28,7 @@ typedef struct {
     int depth, failed;
     char msg[200];
     /* pixel shaders */
-    int ps, final_written, m3_rows;
+    int ps, final_written, final_fog, m3_rows;
     uint8_t sampler[4];       /* 0 unused, 1 2D, 2 cube */
 } Xs;
 
@@ -370,6 +370,7 @@ static void ps_instruction(Xs *x, char *line) {
         if (ps_source(x, ops[6], 1, s[6], sizeof s[6])) return;
         emit(x, "  fin.rgb = (%s * %s + (1 - %s) * %s + %s).rgb;\n  fin.a = (%s).a;\n", s[0], s[1], s[0], s[2], s[3], s[6]);
         x->final_written = 1;
+        x->final_fog = !strncmp(trim(ops[0]), "fog", 3);   /* "xfc fog.a, r0, fog.rgb, ...": the device blends the fog */
         return;
     }
 
@@ -493,7 +494,7 @@ static void process_line(Xs *x, const char *raw) {
     else instruction(x, line);
 }
 
-static int translate(const char *src, size_t len, int ps, char *out, size_t cap, uint32_t *inputs) {
+static int translate(const char *src, size_t len, int ps, char *out, size_t cap, uint32_t *inputs, int *fog) {
     Xs *x = calloc(1, sizeof *x);
     x->ps = ps;
     char *text = malloc(len + 1);
@@ -549,6 +550,7 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
         size_t o = 0;
         o += snprintf(out + o, cap - o,
                       "float4 c[96] : register(c0);\n"
+                      "float4 hostfog : register(c96);\n"
                       "struct VS_OUT { float4 pos : POSITION; float4 d0 : COLOR0; float4 d1 : COLOR1;\n"
                       "  float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float fog : FOG; };\n"
                       "VS_OUT main(");
@@ -566,13 +568,18 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
             memcpy(out + o, x->body ? x->body : "", x->body_len);
             o += x->body_len;
             snprintf(out + o, cap - o,
-                     /* oFog is a fog coordinate on the Xbox but a blend factor in
-                        Direct3D 9: until the fog modes are mapped, no vertex fog */
-                     "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = 1.0;\n"
+                     /* oFog is a fog coordinate on the Xbox, a blend factor in Direct3D 9:
+                        apply the FOGTABLEMODE function (hostfog: start, end, density, mode) */
+                     "  float fc = abs(oFog.x), fog = 1.0;\n"
+                     "  if (hostfog.w == 3) fog = (hostfog.y - fc) / (hostfog.y - hostfog.x);\n"
+                     "  else if (hostfog.w == 1) fog = exp(-fc * hostfog.z);\n"
+                     "  else if (hostfog.w == 2) fog = exp(-(fc * hostfog.z) * (fc * hostfog.z));\n"
+                     "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = saturate(fog);\n"
                      "  return o;\n}\n");
         }
     }
     if (inputs) *inputs = x->inputs;
+    if (fog) *fog = !x->final_written || x->final_fog;   /* without xfc the default final combiner fogs */
     free(x->body);
     free(text);
     free(x);
@@ -580,11 +587,11 @@ static int translate(const char *src, size_t len, int ps, char *out, size_t cap,
 }
 
 int xs_vs_to_hlsl(const char *src, size_t len, char *out, size_t cap, uint32_t *inputs) {
-    return translate(src, len, 0, out, cap, inputs);
+    return translate(src, len, 0, out, cap, inputs, NULL);
 }
 
-int xs_ps_to_hlsl(const char *src, size_t len, char *out, size_t cap) {
-    return translate(src, len, 1, out, cap, NULL);
+int xs_ps_to_hlsl(const char *src, size_t len, char *out, size_t cap, int *fog) {
+    return translate(src, len, 1, out, cap, NULL, fog);
 }
 
 int xs_is_pixel_shader(const char *src, size_t len) {

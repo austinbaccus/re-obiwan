@@ -18,12 +18,31 @@
 #define IFACE_STREAM 2
 #define IFACE_BUFFER 3
 
+/* one vtable per interface; objects are reference counted (+4) and freed on
+   their last Release: the game creates sound buffers all through a level */
 uint32_t make_object(uint32_t iface, uint32_t size) {
-    uint32_t vt = kmem_alloc(64 * 4, 16), o = kmem_alloc(size, 16);
-    for (uint32_t i = 0; i < 64; i++) WR32(MEM(vt + 4 * i), VCALL_BASE | (iface << 8) | i);
-    WR32(MEM(o), vt);
+    static uint32_t vtables[8];
+    if (!vtables[iface]) {
+        vtables[iface] = kmem_alloc(64 * 4, 16);
+        for (uint32_t i = 0; i < 64; i++) WR32(MEM(vtables[iface] + 4 * i), VCALL_BASE | (iface << 8) | i);
+    }
+    uint32_t o = kmem_alloc(size, 16);
+    if (!o) return 0;
+    WR32(MEM(o), vtables[iface]);
     WR32(MEM(o + 4), 1); /* refcount */
     return o;
+}
+static uint32_t object_addref(uint32_t o) {
+    if (!o) return 0;
+    WR32(MEM(o + 4), RD32(MEM(o + 4)) + 1);
+    return RD32(MEM(o + 4));
+}
+static uint32_t object_release(uint32_t o) {
+    if (!o || !RD32(MEM(o + 4))) return 0;
+    uint32_t n = RD32(MEM(o + 4)) - 1;
+    WR32(MEM(o + 4), n);
+    if (!n) kmem_free(o);
+    return n;
 }
 
 /* Pop counts (dwords the original slot function pops on return) of the real
@@ -49,8 +68,8 @@ void host_vcall(Ctx *ctx, uint32_t id) {
     uint32_t a0 = ARG(ctx, 0), a1 = ARG(ctx, 1);
     trace("dsound: iface %u slot %u (pops %d)", iface, slot, pops);
     uint32_t result = 0;
-    if (slot == 0) result = 2;      /* AddRef */
-    else if (slot == 1) result = 1; /* Release: never destroy */
+    if (slot == 0) result = object_addref(a0);        /* AddRef(this) */
+    else if (slot == 1) result = iface == IFACE_DSOUND ? 1 : object_release(a0); /* Release(this); the device stays */
     else if (iface == IFACE_STREAM) {
         if (slot == 10 && a0) memset(MEM(a0), 0, 16);   /* GetInfo(pInfo) */
         else if (slot == 11 && a0) WR32(MEM(a0), 0);    /* GetStatus(pdwStatus): idle */
@@ -78,7 +97,7 @@ HOOK(DirectSoundCreateStream) {
 }
 HOOK(DirectSoundDoWork) { RET(DirectSoundDoWork, 0); }
 HOOK(IDirectSound_Release) { RET(IDirectSound_Release, 0); }
-HOOK(IDirectSoundBuffer_Release) { RET(IDirectSoundBuffer_Release, 0); }
+HOOK(IDirectSoundBuffer_Release) { RET(IDirectSoundBuffer_Release, object_release(ARG(ctx, 0))); }
 HOOK(IDirectSoundStream_Pause) { RET(IDirectSoundStream_Pause, 0); }
 HOOK(IDirectSound_GetCaps) {
     uint32_t pcaps = ARG(ctx, 1);

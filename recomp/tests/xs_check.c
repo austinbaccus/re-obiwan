@@ -33,7 +33,8 @@ int main(int argc, char **argv) {
         total++;
         uint32_t inputs = 0;
         int ps = xs_is_pixel_shader(src, n);
-        if (ps ? xs_ps_to_hlsl(src, n, hlsl, sizeof hlsl) : xs_vs_to_hlsl(src, n, hlsl, sizeof hlsl, &inputs)) {
+        int fog = 0;
+        if (ps ? xs_ps_to_hlsl(src, n, hlsl, sizeof hlsl, &fog) : xs_vs_to_hlsl(src, n, hlsl, sizeof hlsl, &inputs)) {
             printf("%s: translate: %s\n", argv[i], hlsl);
             bad++;
         } else {
@@ -44,7 +45,8 @@ int main(int argc, char **argv) {
                 printf("%s: compile: %s\n", argv[i], errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "?");
                 bad++;
             } else {
-                printf("%s: ok, inputs %04x, %u bytes\n", argv[i], inputs, (unsigned)ID3D10Blob_GetBufferSize(code));
+                if (ps) printf("%s: ok, %s, %u bytes\n", argv[i], fog ? "fogged" : "no fog", (unsigned)ID3D10Blob_GetBufferSize(code));
+                else printf("%s: ok, inputs %04x, %u bytes\n", argv[i], inputs, (unsigned)ID3D10Blob_GetBufferSize(code));
             }
             if (code) ID3D10Blob_Release(code);
             if (errors) ID3D10Blob_Release(errors);

@@ -221,7 +221,12 @@ HOOK(D3DDevice_SetViewport) {
 #define ECX(ctx) RD32((ctx)->r + REG_ECX)
 #define EDX(ctx) RD32((ctx)->r + REG_EDX)
 HOOK(D3DDevice_SetRenderState_Simple) { if (g_render) r_set_rs_simple(ECX(ctx), EDX(ctx)); RET(D3DDevice_SetRenderState_Simple, 0); }
-HOOK(D3DDevice_SetRenderState_Deferred) { if (g_render) r_set_rs_deferred(ECX(ctx), EDX(ctx)); RET(D3DDevice_SetRenderState_Deferred, 0); }
+/* like the original (0x3690a0): store into D3D_g_RenderState, where the
+   renderer picks deferred states up at the next draw */
+HOOK(D3DDevice_SetRenderState_Deferred) {
+    if (ECX(ctx) < 0x74) WR32(MEM(0x0037ac68 + 4 * ECX(ctx)), EDX(ctx));
+    RET(D3DDevice_SetRenderState_Deferred, 0);
+}
 HOOK(D3DDevice_SetRenderState_CullMode) { if (g_render) r_set_rs(PC_RS_CULLMODE, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_CullMode, 0); }
 HOOK(D3DDevice_SetRenderState_FogColor) { if (g_render) r_set_rs(PC_RS_FOGCOLOR, ARG(ctx, 0)); RET(D3DDevice_SetRenderState_FogColor, 0); }
 HOOK(D3DDevice_SetRenderState_ShadowFunc) { RET(D3DDevice_SetRenderState_ShadowFunc, 0); }

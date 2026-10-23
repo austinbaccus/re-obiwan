@@ -107,6 +107,15 @@ next to the executable. Environment switches for unattended runs:
   that frame.
 - `RECOMP_VSLOG=1`: log shader assembly, vertex declarations, the vertex
   shader constants set (each register/count once) and stream strides.
+- `RECOMP_RSLOG=1`: log each change of a deferred render state (D3D8 3948
+  indices 82..115, read from `D3D_g_RenderState` before each draw).
+- `RECOMP_FOG=start,end,RRGGBB`: force linear fog on every draw, to check the
+  fog path in levels that do not enable fog themselves.
+- Level select for tests: copy a `launch.last.bin` from a run that relaunched
+  into a level, replace the level name at offset 7 (`L01_1`, `L02_1a`,
+  `L03_2a`, `L04_3a`, `L05_1`, ...) and boot it with `RECOMP_LAUNCH`. The rest
+  of the data still describes the original level, so some levels misbehave
+  (L02_1a fails its mission at once).
 - `RECOMP_TRACE=1`, `RECOMP_TRACE_CALLS=1|2`: log kernel calls and hooks;
   indirect (or all) guest calls. About 100× slower.
 
