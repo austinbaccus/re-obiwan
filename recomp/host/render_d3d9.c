@@ -36,6 +36,7 @@ static IDirect3DDevice9 *g_dev;
 static uint32_t g_width, g_height;
 static int g_lost;
 static int g_drawlog = -1; /* RECOMP_DRAWLOG=N: describe the first N draws and transforms */
+static uint32_t g_frame;   /* presents so far */
 
 /* ---- window --------------------------------------------------------------- */
 static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -229,6 +230,11 @@ static uint32_t to_argb(uint32_t fmt, const uint8_t *p) {
 static void upload(TexSlot *t) {
     uint32_t w, h, fmt, pitch;
     d3d_describe(t->guest, 0, &w, &h, &fmt, &pitch);
+    if (getenv("RECOMP_TEXLOG")) {
+        uint32_t f = RD32(MEM(t->guest + 0xC));
+        fprintf(stderr, "texture %08x: format reg %08x (%s, dims %u, fmt %02x, %ux%u, %u levels) data %08x size %08x\n", t->guest, f,
+                (f & 4) ? "cube" : "2d", (f >> 4) & 0xf, fmt, w, h, (f >> 16) & 0xf, RD32(MEM(t->guest + 4)), RD32(MEM(t->guest + 0x10)));
+    }
     if (!w || !h || w > 4096 || h > 4096) return;
     uint32_t data = RD32(MEM(t->guest + 4));
     if (!data) return;
@@ -307,19 +313,19 @@ static void apply_textures(void) {
         if (!t) continue;
         if (t->dirty) upload(t);
         IDirect3DDevice9_SetTexture(g_dev, s, (IDirect3DBaseTexture9 *)t->tex);
-        /* the game's texture matrix, followed (for linear textures, which the
-           console addresses in texels) by a scale to normalised coordinates */
-        D3DMATRIX m;
-        memcpy(&m, g_texmat[s], 64);
+        /* the game's texture matrix while its TEXTURETRANSFORMFLAGS enable it
+           (a matrix left over from an animated texture must not move later
+           draws), followed for linear textures, which the console addresses
+           in texels, by a scale to normalised coordinates */
+        static const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         uint32_t flags = g_texflags[s];
+        D3DMATRIX m;
+        memcpy(&m, flags ? g_texmat[s] : identity, 64);
         if (t->tex && t->linear) {
             float sx = 1.0f / t->w, sy = 1.0f / t->h;
             for (int r = 0; r < 4; r++) { m.m[r][0] *= sx; m.m[r][1] *= sy; }
+            if (!flags) flags = D3DTTFF_COUNT2;
         }
-        /* the console applies a set texture matrix without a separate enable;
-           the front end maps vertex positions to texels through it */
-        static const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        if (!flags && (t->linear || memcmp(g_texmat[s], identity, 64) != 0)) flags = D3DTTFF_COUNT2;
         IDirect3DDevice9_SetTransform(g_dev, D3DTS_TEXTURE0 + s, &m);
         IDirect3DDevice9_SetTextureStageState(g_dev, s, D3DTSS_TEXTURETRANSFORMFLAGS, flags);
     }
@@ -762,6 +768,20 @@ static void draw_vs(uint32_t prim, uint32_t n, const uint8_t *verts, uint32_t st
     }
     apply_textures();
     apply_pixel_shader();
+    {   /* RECOMP_STATELOG=frame: the shader draws of that frame too */
+        static int frame = -1;
+        if (frame < 0) frame = getenv("RECOMP_STATELOG") ? atoi(getenv("RECOMP_STATELOG")) : 0;
+        if (frame && g_frame + 1 == (uint32_t)frame) {
+            char head[48];
+            const char *p = g_vsh->src;
+            while (p < g_vsh->src + g_vsh->len && (*p == ' ' || *p == '\n' || *p == '\r')) p++;
+            snprintf(head, sizeof head, "%.40s", p);
+            for (char *q = head; *q; q++) if (*q == '\n' || *q == '\r') *q = ' ';
+            fprintf(stderr, "vsdraw: prim %u n %u verts %u vs %08x (%u bytes: %s) ps %08x tex %08x %08x %08x %08x | c5 %.2f %.2f %.2f | c16 %.2f %.2f %.2f | c7 %.2f %.2f %.2f %.0f\n",
+                    prim, n, count, g_vsh->handle, (unsigned)g_vsh->len, head, g_ps_handle, g_bound[0], g_bound[1], g_bound[2], g_bound[3],
+                    g_vsc[5][0], g_vsc[5][1], g_vsc[5][2], g_vsc[16][0], g_vsc[16][1], g_vsc[16][2], g_vsc[7][0], g_vsc[7][1], g_vsc[7][2], g_vsc[7][3]);
+        }
+    }
     IDirect3DDevice9_SetVertexDeclaration(g_dev, g_vsh->decl);
     IDirect3DDevice9_SetVertexShader(g_dev, g_vsh->vs);
     IDirect3DDevice9_SetVertexShaderConstantF(g_dev, 0, &g_vsc[0][0], 96);
@@ -973,7 +993,6 @@ static void drawlog(uint32_t prim, uint32_t n, const void *data, uint32_t stride
 }
 
 /* RECOMP_STATELOG=frame: the device state behind every draw of that frame */
-static uint32_t g_frame;
 static void statelog(uint32_t prim, uint32_t n, const void *data, uint32_t stride) {
     static int frame = -1;
     if (frame < 0) frame = getenv("RECOMP_STATELOG") ? atoi(getenv("RECOMP_STATELOG")) : 0;

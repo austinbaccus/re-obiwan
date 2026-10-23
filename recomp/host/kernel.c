@@ -1049,6 +1049,7 @@ static void nt_open(Ctx *ctx, int create, int nargs) {
         }
     }
     trace("%s %s -> host %s : %08x handle %x", create ? "NtCreateFile" : "NtOpenFile", name, path, st, h);
+    if ((int32_t)st < 0 && getenv("RECOMP_FILELOG")) fprintf(stderr, "file: %s %s -> %s failed %08x\n", create ? "create" : "open", name, path, st);
     if (phandle) WR32(MEM(phandle), h);
     if (iosb) { WR32(MEM(iosb), st); WR32(MEM(iosb + 4), info); }
     RET(st, nargs);
