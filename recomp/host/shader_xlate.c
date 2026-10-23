@@ -295,7 +295,13 @@ static int ps_source(Xs *x, const char *op, int alpha_dest, char *out, size_t ca
         else if (!_stricmp(u, "_sat")) sat = 1;
         else break;
     }
-    char base[96];
+    char base[96], cn[16];
+    if (s[0] == 'c' && s[1] == '[') { /* c[n], as the water shaders' #defined names expand */
+        char *close = strchr(s, ']');
+        if (!close || close[1]) { fail(x, "bad pixel shader constant %s", s); return -1; }
+        snprintf(cn, sizeof cn, "c%d", atoi(s + 2));
+        s = cn;
+    }
     if ((s[0] == 'r' && (s[1] == '0' || s[1] == '1') && !s[2]) || (s[0] == 't' && s[1] >= '0' && s[1] <= '3' && !s[2]) ||
         (s[0] == 'v' && (s[1] == '0' || s[1] == '1') && !s[2])) snprintf(base, sizeof base, "%s", s);
     else if (s[0] == 'c' && isdigit((unsigned char)s[1])) {
@@ -638,8 +644,8 @@ static int translate(const char *src, size_t len, int ps, int target, uint32_t d
                           "  else if (hostfog.w == 1) fog = exp(-fc * hostfog.z);\n"
                           "  else if (hostfog.w == 2) fog = exp(-(fc * hostfog.z) * (fc * hostfog.z));\n"
                           "  VS_OUT o; o.pos = oPos; o.d0 = oD0; o.d1 = oD1; o.t0 = oT0; o.t1 = oT1; o.t2 = oT2; o.t3 = oT3; o.fog = saturate(fog);\n");
-            /* SM4: colours clamped as vs_2_0 outputs are, and Direct3D 9's pixel
-               centres (hostpos: the half-pixel offset in clip units) */
+            /* SM4: colours clamped as vs_2_0 outputs are, and the Xbox's pixel
+               centres (hostpos: its 0.53125-pixel offset in clip units) */
             if (x->sm4) o += snprintf(out + o, cap - o, "  o.d0 = saturate(oD0); o.d1 = saturate(oD1); o.pos.xy += hostpos.xy * oPos.w;\n");
             snprintf(out + o, cap - o, "  return o;\n}\n");
         }
@@ -660,7 +666,30 @@ int xs_ps_to_hlsl(const char *src, size_t len, int target, uint32_t depth_stages
     return translate(src, len, 1, target, depth_stages, out, cap, NULL, fog);
 }
 
+/* the version token, past blank lines, comments and #define lines (the water
+   shaders are assembled with a header of #defines in front, FUN_0011a250) */
+static const char *version_token(const char *src, size_t *len) {
+    const char *end = src + *len;
+    for (;;) {
+        while (src < end && isspace((unsigned char)*src)) src++;
+        if (src < end && (*src == '#' || *src == ';' || (*src == '/' && src + 1 < end && src[1] == '/')))
+            while (src < end && *src != '\n') src++;
+        else if (src + 1 < end && src[0] == '/' && src[1] == '*') {
+            src += 2;
+            while (src + 1 < end && !(src[0] == '*' && src[1] == '/')) src++;
+            src = src + 2 < end ? src + 2 : end;
+        } else break;
+    }
+    *len = (size_t)(end - src);
+    return src;
+}
+
 int xs_is_pixel_shader(const char *src, size_t len) {
-    while (len && isspace((unsigned char)*src)) { src++; len--; }
+    src = version_token(src, &len);
     return (len > 3 && !strncmp(src, "ps.", 3)) || (len > 4 && !strncmp(src, "xps.", 4));
+}
+
+int xs_is_vertex_shader(const char *src, size_t len) {
+    src = version_token(src, &len);
+    return (len > 3 && !strncmp(src, "vs.", 3)) || (len > 4 && !strncmp(src, "xvs.", 4));
 }

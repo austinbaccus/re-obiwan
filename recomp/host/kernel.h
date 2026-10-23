@@ -24,6 +24,7 @@ typedef int32_t NTSTATUS_;
 #define STATUS_NO_MORE_FILES_ ((NTSTATUS_)0x80000006)
 #define STATUS_END_OF_FILE_ ((NTSTATUS_)0xC0000011)
 #define STATUS_OBJECT_TYPE_MISMATCH_ ((NTSTATUS_)0xC0000024)
+#define STATUS_DIRECTORY_NOT_EMPTY_ ((NTSTATUS_)0xC0000101)
 #define STATUS_TIMEOUT_ 0x102
 #define STATUS_ALERTED_ 0x101
 
@@ -62,6 +63,8 @@ void host_watch(uint32_t addr, uint32_t len); /* boot.c: log writes to guest byt
 void native_init(void); /* native.c: RECOMP_NATIVE, original x86 code for chosen functions (debugging) */
 int host_override(uint32_t addr, GuestFn replacement); /* native.c: a host function in place of a recompiled one */
 void widescreen_init(void); /* widescreen.c: wider camera views for RECOMP_RES wider than 4:3 */
+void debug_keys(void);      /* debugkeys.c: F1 restores health; call on the game's thread */
+void framerate_init(void);  /* hooks_d3d.c: the host paces frames instead of the game's spin (RECOMP_MAXFPS) */
 void kernel_frame_presented(void); /* RECOMP_FIXEDFPS: advance the guest's virtual clock a frame */
 extern int g_trace; /* RECOMP_TRACE=1: log every kernel call and hook */
 void trace(const char *fmt, ...);

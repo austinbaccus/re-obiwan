@@ -16,7 +16,7 @@ enum { XS_SM2, XS_SM4 };
    the host's fog parameters (start, end, density, D3DFOG mode) for the fog
    factor computed from oFog.
    SM4: constant buffer b0 holds c[96], the fog parameters and hostpos, whose
-   xy are added to the position times w (Direct3D 9 pixel centres); the
+   xy are added to the position times w (the Xbox's pixel centres); the
    output is struct VARYINGS (SV_Position, COLOR0/1, TEXCOORD0..3, FOG), the
    colours clamped. Defining COLOR_INTERP (nointerpolation) before the text
    gives the colours flat shading. */
@@ -37,4 +37,7 @@ int xs_vs_to_hlsl(const char *src, size_t len, int target, char *out, size_t cap
    depth_stages (bit n), which compare r/q with the depth texel; the input
    is the vertex shader's VARYINGS, whose fog is the fog factor (1 for none). */
 int xs_ps_to_hlsl(const char *src, size_t len, int target, uint32_t depth_stages, char *out, size_t cap, int *fog);
+/* the source's version token is ps.* / xps.* (vs.* / xvs.*), after any
+   comments and #define lines */
 int xs_is_pixel_shader(const char *src, size_t len);
+int xs_is_vertex_shader(const char *src, size_t len);

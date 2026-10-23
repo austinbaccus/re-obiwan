@@ -12,6 +12,7 @@ code, data or assets.
 | [code-map.md](code-map.md) | what each part of `.text` is, code reached only via tables, entry point → `main` → frame loop |
 | [recompiler-notes.md](recompiler-notes.md) | what to recompile vs. replace, instruction hazards, EH, memory, threads, next steps |
 | [api-surface.md](api-surface.md) | every XDK, CRT and kernel function or global the game touches: the host runtime's job ([csv](api-surface.csv)) |
+| [game-structures.md](game-structures.md) | gameplay fields and functions: health, players, damage, camera |
 | [classes.md](classes.md) | 885 RTTI types, class hierarchy and 1,187 vtables ([classes.csv](classes.csv), [vtables.csv](vtables.csv)) |
 | [functions.csv](functions.csv) | all 15,501 functions in the Ghidra project: range, size, section, class, namespace, name |
 | [library-names.csv](library-names.csv) | library functions identified by hand, with evidence |

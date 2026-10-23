@@ -110,6 +110,17 @@ cmake --build build\game --target obiwan
 .\build\game\obiwan.exe extracted\default.xbe   # a 640x480 window; a controller, or Esc = START, Enter = A, arrows = stick
 ```
 
+Without a path, `obiwan.exe` finds `extracted\default.xbe` (or
+`default.xbe`) in its own folder or the folders above it. `build\game` also
+gets `Obi-Wan.exe`, the same game built as a windowed program for a
+double-click: no console, and instead of environment variables it reads
+`obiwan.ini` next to it (`RECOMP_*=value` lines, and `xbe=path` relative to
+that folder; written as a commented template on the first start). A setting
+already in the environment wins over the file, and `obiwan.exe` ignores the
+file. Its output goes to `obiwan.log` next to it (appended to when the game
+relaunches into a level), and start-up errors and crashes also show in a
+message box.
+
 Controllers: Windows XInput pads 1..4 are Xbox ports 1..4 and can be plugged
 in or out while the game runs. A, B, X and Y are the analog face buttons
 (fully pressed), LB is White, RB is Black, the triggers and sticks pass
@@ -154,6 +165,8 @@ next to the executable. Environment switches for unattended runs:
   layer (HUD, text, menus) stays 4:3 in the middle, clipped to it.
   Untextured draws over the whole screen (fades, flashes, cinema bars)
   still cover the full width.
+- F1: every player's health back to full, for testing (a dead player stays
+  dead). The fields it uses are in `docs/recomp/game-structures.md`.
 - F3 (or `RECOMP_FPS=1` from the start): a performance overlay in the top
   left corner (Direct3D 11): frames per second, frame time and the worst
   one, the CPU time of the thread that presents, and where a frame goes:
@@ -174,6 +187,10 @@ next to the executable. Environment switches for unattended runs:
   (needs the Graphics Tools optional feature). `RECOMP_SHADERLOG=1`: print
   each generated fixed-function shader. `RECOMP_NOVSYNC=1`: present
   without waiting for vertical sync.
+- `RECOMP_MAXFPS=n`: at most n frames a second (0: no limit). The game
+  limits itself to 120 (the `sys_fpsclamp` cvar) by spinning at the end of
+  each frame; the host replaces that with sleeping until the next frame is
+  due, at 120 unless this says otherwise. Vsync still applies on top.
 - `RECOMP_STATELOG=frame`: print the device state (blending, stage
   operations, where the first vertex lands on screen) behind every draw of
   that frame.

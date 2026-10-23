@@ -3,12 +3,20 @@
    Lives in obiwan_core.dll and is entered from the fixed-address loader
    (tests/loader.c built as obiwan.exe), which owns the XBE's address range.
 
-   obiwan.exe <default.xbe> [--trace]
-   Game files are read from the folder containing default.xbe; the emulated
-   hard disk is xbox_hdd next to the executable, or RECOMP_HDD. */
+   obiwan.exe [default.xbe] [--trace]
+   Without a path, extracted\default.xbe (or default.xbe) next to or above
+   the executable. Game files are read from the folder containing
+   default.xbe; the emulated hard disk is xbox_hdd next to the executable,
+   or RECOMP_HDD.
+
+   Obi-Wan.exe is the same loader built as a windowed program, for a
+   double-click: no console, settings from obiwan.ini next to it, output in
+   obiwan.log, and start-up errors and crashes in a message box. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <intrin.h>
@@ -153,6 +161,110 @@ void host_watch(uint32_t addr, uint32_t len) {
     RaiseException(WATCH_ARM, 0, 0, NULL);
 }
 
+/* ---- launching without a terminal (#23) -------------------------------------- */
+static int g_windowed; /* entered as Obi-Wan.exe */
+
+static void exe_dir(char *out, size_t n) {
+    GetModuleFileNameA(NULL, out, (DWORD)n);
+    char *s = strrchr(out, '\\');
+    if (s) *s = 0;
+}
+
+/* to stderr, and in the windowed build a message box too */
+static void notice(const char *fmt, ...) {
+    char msg[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", msg);
+    fflush(stderr);
+    if (g_windowed) MessageBoxA(NULL, msg, "Star Wars: Obi-Wan", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+}
+
+/* stderr to obiwan.log next to the executable, unless it already goes
+   somewhere (a redirect); the relaunch into a level appends */
+static void open_log(void) {
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    if (h && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN) return;
+    char path[MAX_PATH];
+    exe_dir(path, sizeof path);
+    strncat(path, "\\obiwan.log", sizeof path - strlen(path) - 1);
+    if (freopen(path, getenv("RECOMP_LOG_OPEN") ? "a" : "w", stderr)) _putenv_s("RECOMP_LOG_OPEN", "1");
+}
+
+static const char INI_TEMPLATE[] =
+    "; Settings for Obi-Wan.exe, the double-click launch. obiwan.exe in a\n"
+    "; terminal ignores this file and takes RECOMP_* environment variables;\n"
+    "; a variable that is set in the environment also wins over this file.\n"
+    "; Remove the ; in front of a line to use it.\n"
+    "\n"
+    "; The game's default.xbe, if it is not extracted\\default.xbe next to\n"
+    "; or above this folder. Relative to this folder.\n"
+    ";xbe=..\\..\\extracted\\default.xbe\n"
+    "\n"
+    "; Picture size, and a borderless window over the whole primary monitor\n"
+    ";RECOMP_RES=1920x1440\n"
+    ";RECOMP_FULLSCREEN=1\n"
+    "\n"
+    "; The performance overlay from the start (F3 toggles it)\n"
+    ";RECOMP_FPS=1\n"
+    "\n"
+    "; Frame rate limit: the game's own is 120, 0 means none. Vsync still\n"
+    "; limits it to the monitor's refresh rate unless RECOMP_NOVSYNC=1.\n"
+    ";RECOMP_MAXFPS=120\n"
+    "\n"
+    "; Straight into a level (launch files are in build\\launches)\n"
+    ";RECOMP_LAUNCH=..\\launches\\L01_1.bin\n";
+
+/* obiwan.ini: xbe=path (relative to the executable's folder) and RECOMP_*
+   settings for those not already in the environment; written as a
+   commented template when missing */
+static void read_ini(char *xbe, size_t n) {
+    char dir[MAX_PATH], path[MAX_PATH], line[1024];
+    exe_dir(dir, sizeof dir);
+    snprintf(path, sizeof path, "%s\\obiwan.ini", dir);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        if ((f = fopen(path, "w")) != NULL) { fputs(INI_TEMPLATE, f); fclose(f); }
+        return;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char *key = line, *eq, *end;
+        while (isspace((unsigned char)*key)) key++;
+        if (!*key || *key == ';' || *key == '#' || *key == '[' || !(eq = strchr(key, '='))) continue;
+        char *val = eq + 1;
+        for (end = eq; end > key && isspace((unsigned char)end[-1]); end--) {}
+        *end = 0;
+        while (isspace((unsigned char)*val)) val++;
+        for (end = val + strlen(val); end > val && isspace((unsigned char)end[-1]); end--) {}
+        *end = 0;
+        if (!_stricmp(key, "xbe")) {
+            int absolute = val[0] == '\\' || (val[0] && val[1] == ':');
+            snprintf(xbe, n, absolute ? "%s%s" : "%s\\%s", absolute ? "" : dir, val);
+        } else if (!_strnicmp(key, "RECOMP_", 7)) {
+            if (!getenv(key)) _putenv_s(key, val);
+        } else fprintf(stderr, "obiwan.ini: %s is not a setting\n", key);
+    }
+    fclose(f);
+}
+
+/* extracted\default.xbe or default.xbe in the executable's folder or above */
+static int find_xbe(char *out, size_t n) {
+    char dir[MAX_PATH];
+    exe_dir(dir, sizeof dir);
+    for (int up = 0; up < 6; up++) {
+        snprintf(out, n, "%s\\extracted\\default.xbe", dir);
+        if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) return 1;
+        snprintf(out, n, "%s\\default.xbe", dir);
+        if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) return 1;
+        char *s = strrchr(dir, '\\');
+        if (!s) break;
+        *s = 0;
+    }
+    return 0;
+}
+
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
     static int in_filter;
     if (in_filter++) ExitProcess(20);
@@ -179,6 +291,8 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e) {
         p++;
     }
     print_host_stack(GetCurrentThread(), c);
+    if (g_windowed) notice("The game stopped with an error (exception %08lx). The details are in obiwan.log next to Obi-Wan.exe.",
+                           e->ExceptionRecord->ExceptionCode);
     ExitProcess(21);
 }
 
@@ -281,8 +395,17 @@ static DWORD WINAPI profiler(LPVOID p) {
 #define GUEST_RAM_SIZE  0x03A00000u /* up to 64 MB, like the console */
 
 static int run(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: obiwan <default.xbe> [--trace]\n"); return 2; }
-    for (int i = 2; i < argc; i++) if (strcmp(argv[i], "--trace") == 0) g_trace = 1;
+    char xbe_path[MAX_PATH] = "", here[MAX_PATH];
+    if (g_windowed) { open_log(); read_ini(xbe_path, sizeof xbe_path); }
+    int first_option = 1;
+    if (argc >= 2 && strncmp(argv[1], "--", 2) != 0) { snprintf(xbe_path, sizeof xbe_path, "%s", argv[1]); first_option = 2; }
+    if (!xbe_path[0] && !find_xbe(xbe_path, sizeof xbe_path)) {
+        exe_dir(here, sizeof here);
+        notice("usage: obiwan [default.xbe] [--trace]\n\nNo extracted\\default.xbe was found in %s or the folders above it. "
+               "Give the path to default.xbe%s.", here, g_windowed ? " in obiwan.ini (xbe=...)" : "");
+        return 2;
+    }
+    for (int i = first_option; i < argc; i++) if (strcmp(argv[i], "--trace") == 0) g_trace = 1;
     SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
     SetUnhandledExceptionFilter(crash_filter);
     if (getenv("RECOMP_TRACE")) g_trace = 1;
@@ -310,7 +433,10 @@ static int run(int argc, char **argv) {
        and point the PEB at it. */
     void *headers = VirtualAlloc(NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     memcpy(headers, (void *)0x10000, 0x1000);
-    if (!xbe_load(argv[1], &xbe)) return 3;
+    if (!xbe_load(xbe_path, &xbe)) {
+        notice("The game could not start: %s could not be loaded as default.xbe.", xbe_path);
+        return 3;
+    }
     *(void **)((char *)__readfsdword(0x30) + 8) = headers; /* PEB->ImageBaseAddress */
     {
         HANDLE t = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)Sleep, NULL, 0, NULL);
@@ -319,7 +445,7 @@ static int run(int argc, char **argv) {
     kmem_init(GUEST_RAM_START, GUEST_RAM_SIZE);
 
     char game_dir[MAX_PATH], hdd_dir[MAX_PATH], exe[MAX_PATH];
-    strncpy(game_dir, argv[1], MAX_PATH - 1);
+    strncpy(game_dir, xbe_path, MAX_PATH - 1);
     char *slash = strrchr(game_dir, '\\');
     if (!slash) slash = strrchr(game_dir, '/');
     if (slash) *slash = 0; else strcpy(game_dir, ".");
@@ -338,6 +464,7 @@ static int run(int argc, char **argv) {
        it creates the real main thread and returns. */
     native_init();
     widescreen_init();
+    framerate_init();
     kernel_run_thread(0, 0, 0x10000, 0x14, xbe.entry);
     fprintf(stderr, "obiwan: entry returned; waiting for the game thread\n");
     /* the window belongs to this thread: pump its messages while the game runs */
@@ -360,4 +487,10 @@ __declspec(dllexport) void game_main(void) {
     int rc = run(argc, argv);
     fflush(stderr);
     ExitProcess((UINT)rc);
+}
+
+/* Obi-Wan.exe: the same, as a windowed program */
+__declspec(dllexport) void game_main_windowed(void) {
+    g_windowed = 1;
+    game_main();
 }
